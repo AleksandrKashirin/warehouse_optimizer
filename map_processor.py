@@ -56,18 +56,18 @@ class MapProcessor:
         if not check_radius:
             return True
         
-        # Проверка с учетом радиуса робота (упрощенная для скорости)
+        # Проверка с учетом радиуса робота (исправлено)
         r = self.robot_radius_pixels
         
         # Проверяем ключевые точки вокруг робота
         for dx in [-r, 0, r]:
             for dy in [-r, 0, r]:
                 nx, ny = x + dx, y + dy
+                # Проверяем только точки внутри карты
                 if 0 <= nx < self.width and 0 <= ny < self.height:
                     if self.grid[ny, nx] == 1:
                         return False
-                else:
-                    return False
+                # Точки за границей карты не блокируют проход
         
         return True
     
@@ -77,8 +77,8 @@ class MapProcessor:
             return self.grid[y, x] == 1
         return False
     
-    def find_nearest_walkable(self, x: int, y: int, max_radius: int = 20) -> Optional[Tuple[int, int]]:
-        """Быстрый поиск ближайшей проходимой точки"""
+    def find_nearest_walkable(self, x: int, y: int, max_radius: int = 50) -> Optional[Tuple[int, int]]:
+        """Поиск ближайшей проходимой точки (увеличен радиус)"""
         # Если точка уже проходима
         if self.is_walkable(x, y, check_radius=False):
             return (x, y)
@@ -101,8 +101,9 @@ class MapProcessor:
         return None
     
     def a_star(self, start: Tuple[int, int], goal: Tuple[int, int]) -> Optional[List[Tuple[int, int]]]:
-        """Алгоритм A* для поиска пути"""
-        if not self.is_walkable(*start, check_radius=True) or not self.is_walkable(*goal, check_radius=True):
+        """Алгоритм A* для поиска пути (исправлено)"""
+        # Используем менее строгую проверку для точек старта и финиша
+        if not self.is_walkable(*start, check_radius=False) or not self.is_walkable(*goal, check_radius=False):
             return None
         
         def heuristic(a, b):
@@ -135,7 +136,8 @@ class MapProcessor:
             for dx, dy in directions:
                 neighbor = (current[0] + dx, current[1] + dy)
                 
-                if not self.is_walkable(*neighbor, check_radius=True):
+                # Используем менее строгую проверку для промежуточных точек
+                if not self.is_walkable(*neighbor, check_radius=False):
                     continue
                 
                 tentative_g = g_score[current] + 1

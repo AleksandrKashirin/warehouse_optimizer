@@ -48,11 +48,27 @@ def generate_test_data():
         generate_warehouse_map()
         print("✓ Тестовая карта создана")
 
-    if not products_file.exists() and Path("sample_products.csv").exists():
-        import shutil
-
-        shutil.copy("sample_products.csv", products_file)
-        print("✓ Файл с товарами скопирован")
+    if not products_file.exists():
+        # Создаем базовый файл товаров
+        with open(products_file, 'w', encoding='utf-8', newline='') as f:
+            import csv
+            writer = csv.writer(f)
+            writer.writerow(["ID", "Название", "X", "Y", "Access_X", "Access_Y"])
+            products = [
+                ("A001", "Молоко пастеризованное"),
+                ("A002", "Хлеб черный"),
+                ("A003", "Масло сливочное"),
+                ("A004", "Сыр твердый"),
+                ("A005", "Колбаса вареная"),
+                ("B001", "Гречка крупа"),
+                ("B002", "Рис круглый"),
+                ("B003", "Макароны спагетти"),
+                ("B004", "Мука пшеничная"),
+                ("B005", "Сахар белый"),
+            ]
+            for product_id, name in products:
+                writer.writerow([product_id, name, "", "", "", ""])
+        print("✓ Файл с товарами создан")
 
     # Генерация тестовых фото товаров
     if not any(photos_dir.glob("*.jpg")) and not any(photos_dir.glob("*.png")):

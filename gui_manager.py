@@ -152,8 +152,9 @@ class WarehouseGUI:
                 self.display_map()
                 count = len(self.route_optimizer.products)
                 placed = len(self.route_optimizer.placed_products)
+                access_count = len(self.route_optimizer.access_points)
                 self.info_label.config(
-                    text=f"Загружено товаров: {count}, размещено: {placed}"
+                    text=f"Загружено товаров: {count}, размещено: {placed}, с доступом: {access_count}"
                 )
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось загрузить товары: {e}")
@@ -211,18 +212,19 @@ class WarehouseGUI:
         selector.title("Выберите товар для размещения")
 
         placed_count = len(self.route_optimizer.placed_products)
+        access_count = len(self.route_optimizer.access_points)
         total_count = len(self.route_optimizer.products)
 
         info_frame = tk.Frame(selector)
         info_frame.pack(padx=10, pady=5)
         tk.Label(
             info_frame,
-            text=f"Размещено: {placed_count}/{total_count} товаров",
+            text=f"Размещено: {placed_count}/{total_count} товаров, доступно: {access_count}",
             font=("Arial", 10, "bold"),
         ).pack()
-        if placed_count < 5:
+        if access_count < 5:
             tk.Label(
-                info_frame, text=f"Минимум для маршрутов: 5 товаров", fg="red"
+                info_frame, text=f"Минимум для маршрутов: 5 товаров с доступом", fg="red"
             ).pack()
         tk.Label(
             info_frame,
@@ -234,7 +236,7 @@ class WarehouseGUI:
         listbox.pack(padx=10, pady=10)
 
         for product in self.route_optimizer.products.values():
-            status = "✓" if product.x >= 0 else "✗"
+            status = "✓" if product.id in self.route_optimizer.access_points else ("◐" if product.x >= 0 else "✗")
             listbox.insert(tk.END, f"{status} {product.id}: {product.name}")
 
         def on_select():
@@ -251,7 +253,7 @@ class WarehouseGUI:
         def on_cancel():
             self.mode = "view"
             self.info_label.config(
-                text=f"Размещено товаров: {placed_count}/{total_count}"
+                text=f"Размещено товаров: {placed_count}/{total_count}, доступно: {access_count}"
             )
             selector.destroy()
 
@@ -308,36 +310,30 @@ class WarehouseGUI:
 
             # Если клик на стеллаже - размещаем товар там
             if self.map_processor.is_shelf(ix, iy):
-                # Проверяем доступность
-                access = self.map_processor.find_nearest_walkable(ix, iy)
+                # Ищем точку доступа с увеличенным радиусом
+                access = self.map_processor.find_nearest_walkable(ix, iy, max_radius=50)
                 if access:
-                    self.route_optimizer.place_product(self.selected_product_id, ix, iy)
+                    self.route_optimizer.place_product(self.selected_product_id, ix, iy, access)
                     self.display_map()
-                    self.info_label.config(text=f"Товар размещен на стеллаже")
+                    self.info_label.config(text=f"Товар размещен на стеллаже с точкой доступа")
                     self.show_product_selector()
                 else:
                     messagebox.showwarning("Внимание", "К этому месту нет доступа!")
             # Если клик в проходе рядом со стеллажом - ищем ближайший стеллаж
             else:
-                # Ищем ближайший стеллаж в радиусе 30 пикселей
+                # Ищем ближайший стеллаж в радиусе 50 пикселей
                 found = False
-                for r in range(1, 30):
+                for r in range(1, 50):
                     for dx in range(-r, r + 1):
                         for dy in range(-r, r + 1):
                             sx, sy = ix + dx, iy + dy
                             if self.map_processor.is_shelf(sx, sy):
-                                # Проверяем доступность
-                                access = self.map_processor.find_nearest_walkable(
-                                    sx, sy
-                                )
+                                # Ищем точку доступа с увеличенным радиусом
+                                access = self.map_processor.find_nearest_walkable(sx, sy, max_radius=50)
                                 if access:
-                                    self.route_optimizer.place_product(
-                                        self.selected_product_id, sx, sy
-                                    )
+                                    self.route_optimizer.place_product(self.selected_product_id, sx, sy, access)
                                     self.display_map()
-                                    self.info_label.config(
-                                        text=f"Товар размещен на ближайшем стеллаже"
-                                    )
+                                    self.info_label.config(text=f"Товар размещен на ближайшем стеллаже с точкой доступа")
                                     self.show_product_selector()
                                     found = True
                                     break
@@ -347,9 +343,7 @@ class WarehouseGUI:
                         break
 
                 if not found:
-                    messagebox.showwarning(
-                        "Внимание", "Кликните ближе к стеллажу (черная область)"
-                    )
+                    messagebox.showwarning("Внимание", "Кликните ближе к стеллажу (черная область)")
 
         elif self.mode == "route_points":
             ix, iy = int(x), int(y)
@@ -391,7 +385,8 @@ class WarehouseGUI:
             if self.mode == "view":
                 product = self.route_optimizer.get_product_at(ix, iy)
                 if product:
-                    self.info_label.config(text=f"Товар: {product.id} - {product.name}")
+                    access_status = "с доступом" if product.id in self.route_optimizer.access_points else "без доступа"
+                    self.info_label.config(text=f"Товар: {product.id} - {product.name} ({access_status})")
                 else:
                     status = (
                         "стеллаж" if self.map_processor.is_shelf(ix, iy) else "проход"
@@ -446,13 +441,17 @@ class WarehouseGUI:
         # Отрисовка размещенных товаров
         for product_id, (x, y) in self.route_optimizer.placed_products.items():
             # Товар на стеллаже
-            draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill="yellow", outline="orange")
+            if product_id in self.route_optimizer.access_points:
+                draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill="yellow", outline="orange")
+                # Показываем точку доступа
+                access_x, access_y = self.route_optimizer.access_points[product_id]
+                draw.ellipse([access_x - 2, access_y - 2, access_x + 2, access_y + 2], fill="lightgreen", outline="green")
+                draw.line([x, y, access_x, access_y], fill="lightblue", width=1)
+            else:
+                # Товар без точки доступа
+                draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill="orange", outline="red")
+            
             draw.text((x + 5, y - 5), product_id, fill="blue")
-
-            # Показываем точку доступа тонкой линией
-            access = self.map_processor.find_nearest_walkable(x, y, max_radius=15)
-            if access:
-                draw.line([x, y, access[0], access[1]], fill="lightblue", width=1)
 
         self.map_image = img
         self.photo_image = ImageTk.PhotoImage(img)
@@ -483,8 +482,10 @@ class WarehouseGUI:
             messagebox.showwarning("Предупреждение", "Установите точки старта и финиша")
             return
 
-        if len(self.route_optimizer.placed_products) < 5:
-            messagebox.showwarning("Предупреждение", "Разместите минимум 5 товаров")
+        # Используем товары с точками доступа
+        access_count = len(self.route_optimizer.access_points)
+        if access_count < 5:
+            messagebox.showwarning("Предупреждение", f"Разместите минимум 5 товаров с точками доступа. Сейчас: {access_count}")
             return
 
         num_samples = simpledialog.askinteger(
@@ -512,21 +513,14 @@ class WarehouseGUI:
                 progress_label.config(text=f"Обработка маршрута {i+1}/{num_samples}")
                 progress.update()
 
-                coords = []
-                # Для товаров на стеллажах находим точки доступа
-                for product_id in sample:
-                    if product_id in self.route_optimizer.placed_products:
-                        px, py = self.route_optimizer.placed_products[product_id]
-                        access_point = self.map_processor.find_nearest_walkable(
-                            px, py, max_radius=20
-                        )
-                        if access_point:
-                            coords.append(access_point)
+                # Используем сохраненные точки доступа
+                coords = self.route_optimizer.get_access_coordinates(sample)
 
                 if len(coords) != len(sample):
                     failed_routes += 1
                     progress_bar["value"] = i + 1
                     progress.update()
+                    print(f"Маршрут {i+1}: не все товары имеют точки доступа")
                     continue
 
                 # Используем упрощенный алгоритм для поиска маршрута
@@ -566,8 +560,12 @@ class WarehouseGUI:
             else:
                 messagebox.showwarning(
                     "Внимание",
-                    "Не удалось построить ни одного маршрута.\n"
-                    "Проверьте размещение товаров.",
+                    f"Не удалось построить ни одного маршрута.\n"
+                    f"Проверьте:\n"
+                    f"- Точки доступа к товарам (зеленые точки на карте)\n"
+                    f"- Проходимость между стартом, товарами и финишем\n"
+                    f"- Размер радиуса робота\n"
+                    f"Товаров с доступом: {access_count}",
                 )
 
         except Exception as e:
@@ -603,23 +601,21 @@ class WarehouseGUI:
 
         # Выделение товаров в маршруте
         for idx, product_id in enumerate(products, 1):
-            if product_id in self.route_optimizer.placed_products:
-                x, y = self.route_optimizer.placed_products[product_id]
-                access = self.map_processor.find_nearest_walkable(x, y, max_radius=20)
-                if access:
-                    ax, ay = access
-                    draw_route.ellipse(
-                        [ax - 7, ay - 7, ax + 7, ay + 7],
-                        fill="yellow",
-                        outline="orange",
-                        width=2,
-                    )
-                    draw_route.text((ax - 4, ay - 6), str(idx), fill="black")
-                    draw_route.line([ax, ay, x, y], fill="orange", width=1)
-
+            if product_id in self.route_optimizer.access_points:
+                ax, ay = self.route_optimizer.access_points[product_id]
                 draw_route.ellipse(
-                    [x - 4, y - 4, x + 4, y + 4], fill="yellow", outline="red"
+                    [ax - 7, ay - 7, ax + 7, ay + 7],
+                    fill="yellow",
+                    outline="orange",
+                    width=2,
                 )
+                draw_route.text((ax - 4, ay - 6), str(idx), fill="black")
+                
+                # Линия к товару
+                if product_id in self.route_optimizer.placed_products:
+                    x, y = self.route_optimizer.placed_products[product_id]
+                    draw_route.line([ax, ay, x, y], fill="orange", width=1)
+                    draw_route.ellipse([x - 4, y - 4, x + 4, y + 4], fill="yellow", outline="red")
 
         # Отметка старта и финиша
         if self.start_point:
@@ -803,6 +799,11 @@ class WarehouseGUI:
                         f"{i}. {product['id']}: {product['name']}\n"
                         f"   Позиция: ({product['coordinates'][0]}, {product['coordinates'][1]})\n",
                     )
+                    if "access_point" in product:
+                        info_text.insert(
+                            tk.END,
+                            f"   Доступ: ({product['access_point'][0]}, {product['access_point'][1]})\n",
+                        )
 
         def open_image():
             selection = listbox.curselection()
