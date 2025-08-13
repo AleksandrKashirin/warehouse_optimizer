@@ -797,7 +797,7 @@ class WarehouseGUI:
 
         # Создаем увеличенное изображение для размещения информации
         map_width, map_height = self.map_image.size
-        info_width = 500
+        info_width = 150
         final_width = map_width + info_width
         final_height = max(map_height, 800)
 
