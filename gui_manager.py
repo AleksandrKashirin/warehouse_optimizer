@@ -34,6 +34,7 @@ class WarehouseGUI:
         # Панель управления - первая строка
         control_frame1 = tk.Frame(self.root)
         control_frame1.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
+        
 
         tk.Button(control_frame1, text="Загрузить карту", command=self.load_map).pack(
             side=tk.LEFT, padx=2
@@ -68,6 +69,20 @@ class WarehouseGUI:
         ).pack(side=tk.LEFT, padx=2)
         tk.Button(
             control_frame2, text="Просмотр маршрутов", command=self.view_routes
+        ).pack(side=tk.LEFT, padx=2)
+
+        # Панель управления - третья строка (настройки)
+        control_frame3 = tk.Frame(self.root)
+        control_frame3.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
+
+        tk.Button(
+            control_frame3, text="Сохранить настройки", command=self.save_settings_manual
+        ).pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            control_frame3, text="Загрузить настройки", command=self.load_settings_manual
+        ).pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            control_frame3, text="Очистить точки маршрута", command=self.clear_route_points
         ).pack(side=tk.LEFT, padx=2)
 
         # Информационная панель
@@ -133,13 +148,71 @@ class WarehouseGUI:
         )
         if filepath:
             try:
+                self.current_map_path = filepath  # Сохраняем путь к карте
+                
+                # Сначала пытаемся загрузить метаданные карты
+                metadata_loaded = self.map_processor.load_map_metadata(filepath)
+                if metadata_loaded:
+                    self.scale_set = True
+                    self.robot_radius_set = True
+                
+                # Загружаем карту
                 grid = self.map_processor.load_map(filepath)
+                
+                # Пытаемся загрузить сессию (точки старта/финиша)
+                self.load_session_metadata()
+                
                 self.display_map()
-                self.info_label.config(
-                    text=f"Карта загружена: {self.map_processor.width}x{self.map_processor.height} пикселей"
-                )
+                self.update_status()
+                
+                status_msg = f"Карта загружена: {self.map_processor.width}x{self.map_processor.height} пикселей"
+                if metadata_loaded:
+                    status_msg += f" (настройки восстановлены)"
+                self.info_label.config(text=status_msg)
+                
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось загрузить карту: {e}")
+
+    def set_robot_radius(self):
+        """Установка радиуса робота в метрах"""
+        current = self.map_processor.robot_radius_meters
+        radius = simpledialog.askfloat(
+            "Радиус робота",
+            f"Введите радиус робота в МЕТРАХ\n(текущий: {current:.2f} м):",
+            initialvalue=current,
+            minvalue=0.1,
+            maxvalue=2.0,
+        )
+        if radius:
+            self.map_processor.set_robot_radius_meters(radius)
+            self.robot_radius_set = True
+            self.update_status()
+            self.info_label.config(
+                text=f"Радиус робота: {radius:.2f} м ({self.map_processor.robot_radius_pixels} пикселей)"
+            )
+            self.display_map()
+            
+            # Автосохранение метаданных
+            if hasattr(self, 'current_map_path'):
+                self.map_processor.save_map_metadata(self.current_map_path)
+                self.save_session_metadata()
+
+    def set_scale_mode(self):
+        self.mode = "scale"
+        self.scale_points = []
+        self.canvas.delete("scale")
+        self.info_label.config(text="Кликните на две точки с известным расстоянием")
+
+    def set_route_points_mode(self):
+        self.mode = "route_points"
+        # Очищаем предыдущие точки
+        self.start_point = None
+        self.end_point = None
+        self.canvas.delete("route_point")
+        self.display_map()
+        self.info_label.config(
+            text="Кликните в ПРОХОДЕ (белая область) для установки точки СТАРТА"
+        )
 
     def load_products(self):
         filepath = filedialog.askopenfilename(
@@ -302,6 +375,12 @@ class WarehouseGUI:
                     self.info_label.config(
                         text=f"Масштаб установлен: 1 пиксель = {self.map_processor.scale:.3f} м"
                     )
+                    
+                    # Автосохранение метаданных
+                    if hasattr(self, 'current_map_path'):
+                        self.map_processor.save_map_metadata(self.current_map_path)
+                        self.save_session_metadata()
+                        
                 self.canvas.delete("scale")
                 self.mode = "view"
 
@@ -349,7 +428,109 @@ class WarehouseGUI:
             ix, iy = int(x), int(y)
 
             if not self.start_point:
-                # Проверка с меньшим радиусом для большей гибкости
+                # Более гибкая проверка для точки старта
+                if self.map_processor.is_walkable(ix, iy, check_radius=False):
+                    self.start_point = (ix, iy)
+                    self.display_map()
+                    self.info_label.config(
+                        text="Кликните в ПРОХОДЕ для установки точки ФИНИША"
+                    )
+                    # Автосохранение
+                    if hasattr(self, 'current_map_path'):
+                        self.save_session_metadata()
+                else:
+                    # Попробуем найти ближайшую проходимую точку
+                    nearest = self.map_processor.find_nearest_walkable(ix, iy, max_radius=10)
+                    if nearest:
+                        self.start_point = nearest
+                        self.display_map()
+                        self.info_label.config(
+                            text="Кликните в ПРОХОДЕ для установки точки ФИНИША"
+                        )
+                        # Автосохранение
+                        if hasattr(self, 'current_map_path'):
+                            self.save_session_metadata()
+                    else:
+                        messagebox.showwarning(
+                            "Внимание",
+                            "Точка старта должна быть в проходе (белая область)!",
+                        )
+
+            elif not self.end_point:
+                if self.map_processor.is_walkable(ix, iy, check_radius=False):
+                    self.end_point = (ix, iy)
+                    self.display_map()
+                    self.info_label.config(
+                        text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
+                    )
+                    self.mode = "view"
+                    # Автосохранение
+                    if hasattr(self, 'current_map_path'):
+                        self.save_session_metadata()
+                else:
+                    # Попробуем найти ближайшую проходимую точку
+                    nearest = self.map_processor.find_nearest_walkable(ix, iy, max_radius=10)
+                    if nearest:
+                        self.end_point = nearest
+                        self.display_map()
+                        self.info_label.config(
+                            text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
+                        )
+                        self.mode = "view"
+                        # Автосохранение
+                        if hasattr(self, 'current_map_path'):
+                            self.save_session_metadata()
+                    else:
+                        messagebox.showwarning(
+                            "Внимание",
+                            "Точка финиша должна быть в проходе (белая область)!",
+                        )
+
+        elif self.mode == "place" and hasattr(self, "selected_product_id"):
+            ix, iy = int(x), int(y)
+
+            # Если клик на стеллаже - размещаем товар там
+            if self.map_processor.is_shelf(ix, iy):
+                # Ищем точку доступа с увеличенным радиусом
+                access = self.map_processor.find_nearest_walkable(ix, iy, max_radius=50)
+                if access:
+                    self.route_optimizer.place_product(self.selected_product_id, ix, iy, access)
+                    self.display_map()
+                    self.info_label.config(text=f"Товар размещен на стеллаже с точкой доступа")
+                    self.show_product_selector()
+                else:
+                    messagebox.showwarning("Внимание", "К этому месту нет доступа!")
+            # Если клик в проходе рядом со стеллажом - ищем ближайший стеллаж
+            else:
+                # Ищем ближайший стеллаж в радиусе 50 пикселей
+                found = False
+                for r in range(1, 50):
+                    for dx in range(-r, r + 1):
+                        for dy in range(-r, r + 1):
+                            sx, sy = ix + dx, iy + dy
+                            if self.map_processor.is_shelf(sx, sy):
+                                # Ищем точку доступа с увеличенным радиусом
+                                access = self.map_processor.find_nearest_walkable(sx, sy, max_radius=50)
+                                if access:
+                                    self.route_optimizer.place_product(self.selected_product_id, sx, sy, access)
+                                    self.display_map()
+                                    self.info_label.config(text=f"Товар размещен на ближайшем стеллаже с точкой доступа")
+                                    self.show_product_selector()
+                                    found = True
+                                    break
+                        if found:
+                            break
+                    if found:
+                        break
+
+                if not found:
+                    messagebox.showwarning("Внимание", "Кликните ближе к стеллажу (черная область)")
+
+        elif self.mode == "route_points":
+            ix, iy = int(x), int(y)
+
+            if not self.start_point:
+                # Более гибкая проверка для точки старта
                 if self.map_processor.is_walkable(ix, iy, check_radius=False):
                     self.start_point = (ix, iy)
                     self.display_map()
@@ -357,10 +538,19 @@ class WarehouseGUI:
                         text="Кликните в ПРОХОДЕ для установки точки ФИНИША"
                     )
                 else:
-                    messagebox.showwarning(
-                        "Внимание",
-                        "Точка старта должна быть в проходе (белая область)!",
-                    )
+                    # Попробуем найти ближайшую проходимую точку
+                    nearest = self.map_processor.find_nearest_walkable(ix, iy, max_radius=10)
+                    if nearest:
+                        self.start_point = nearest
+                        self.display_map()
+                        self.info_label.config(
+                            text="Кликните в ПРОХОДЕ для установки точки ФИНИША"
+                        )
+                    else:
+                        messagebox.showwarning(
+                            "Внимание",
+                            "Точка старта должна быть в проходе (белая область)!",
+                        )
 
             elif not self.end_point:
                 if self.map_processor.is_walkable(ix, iy, check_radius=False):
@@ -371,10 +561,20 @@ class WarehouseGUI:
                     )
                     self.mode = "view"
                 else:
-                    messagebox.showwarning(
-                        "Внимание",
-                        "Точка финиша должна быть в проходе (белая область)!",
-                    )
+                    # Попробуем найти ближайшую проходимую точку
+                    nearest = self.map_processor.find_nearest_walkable(ix, iy, max_radius=10)
+                    if nearest:
+                        self.end_point = nearest
+                        self.display_map()
+                        self.info_label.config(
+                            text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
+                        )
+                        self.mode = "view"
+                    else:
+                        messagebox.showwarning(
+                            "Внимание",
+                            "Точка финиша должна быть в проходе (белая область)!",
+                        )
 
     def on_mouse_move(self, event):
         x = self.canvas.canvasx(event.x)
@@ -416,27 +616,15 @@ class WarehouseGUI:
         if self.map_processor.grid is None:
             return
 
-        # Создание изображения из сетки
-        img_array = (1 - self.map_processor.grid) * 255
+        # Создание изображения из оригинальной сетки (для правильного отображения товаров)
+        if hasattr(self.map_processor, 'original_grid'):
+            img_array = (1 - self.map_processor.original_grid) * 255
+        else:
+            img_array = (1 - self.map_processor.grid) * 255
         img = Image.fromarray(img_array.astype(np.uint8), mode="L")
         img = img.convert("RGB")
 
         draw = ImageDraw.Draw(img)
-
-        # Отрисовка точек старта и финиша
-        if self.start_point:
-            x, y = self.start_point
-            draw.ellipse(
-                [x - 5, y - 5, x + 5, y + 5], fill="green", outline="darkgreen", width=2
-            )
-            draw.text((x + 7, y - 5), "START", fill="green")
-
-        if self.end_point:
-            x, y = self.end_point
-            draw.ellipse(
-                [x - 5, y - 5, x + 5, y + 5], fill="red", outline="darkred", width=2
-            )
-            draw.text((x + 7, y - 5), "FINISH", fill="red")
 
         # Отрисовка размещенных товаров
         for product_id, (x, y) in self.route_optimizer.placed_products.items():
@@ -452,6 +640,21 @@ class WarehouseGUI:
                 draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill="orange", outline="red")
             
             draw.text((x + 5, y - 5), product_id, fill="blue")
+
+        # Отрисовка точек старта и финиша
+        if self.start_point:
+            x, y = self.start_point
+            draw.ellipse(
+                [x - 5, y - 5, x + 5, y + 5], fill="green", outline="darkgreen", width=2
+            )
+            draw.text((x + 7, y - 5), "START", fill="green")
+
+        if self.end_point:
+            x, y = self.end_point
+            draw.ellipse(
+                [x - 5, y - 5, x + 5, y + 5], fill="red", outline="darkred", width=2
+            )
+            draw.text((x + 7, y - 5), "FINISH", fill="red")
 
         self.map_image = img
         self.photo_image = ImageTk.PhotoImage(img)
@@ -488,6 +691,10 @@ class WarehouseGUI:
             messagebox.showwarning("Предупреждение", f"Разместите минимум 5 товаров с точками доступа. Сейчас: {access_count}")
             return
 
+        print(f"DEBUG: Настройки - масштаб: {self.map_processor.scale:.4f} м/пикс, радиус робота: {self.map_processor.robot_radius_pixels} пикс")
+        print(f"DEBUG: Старт: {self.start_point}, Финиш: {self.end_point}")
+        print(f"DEBUG: Товаров с доступом: {access_count}")
+
         num_samples = simpledialog.askinteger(
             "Генерация", "Количество выборок:", initialvalue=10
         )
@@ -496,6 +703,7 @@ class WarehouseGUI:
 
         try:
             samples = self.route_optimizer.generate_samples(num_samples)
+            print(f"DEBUG: Сгенерировано {len(samples)} выборок")
 
             progress = tk.Toplevel(self.root)
             progress.title("Генерация маршрутов")
@@ -510,11 +718,13 @@ class WarehouseGUI:
             failed_routes = 0
 
             for i, sample in enumerate(samples):
+                print(f"DEBUG: Обработка маршрута {i+1}: товары {sample}")
                 progress_label.config(text=f"Обработка маршрута {i+1}/{num_samples}")
                 progress.update()
 
                 # Используем сохраненные точки доступа
                 coords = self.route_optimizer.get_access_coordinates(sample)
+                print(f"DEBUG: Координаты точек доступа: {coords}")
 
                 if len(coords) != len(sample):
                     failed_routes += 1
@@ -524,9 +734,12 @@ class WarehouseGUI:
                     continue
 
                 # Используем упрощенный алгоритм для поиска маршрута
+                print(f"DEBUG: Поиск маршрута от {self.start_point} через {coords} к {self.end_point}")
                 path, distance, order = self.map_processor.find_optimal_route_simple(
                     self.start_point, coords, self.end_point
                 )
+
+                print(f"DEBUG: Результат - путь: {len(path) if path else 0} точек, расстояние: {distance:.2f}")
 
                 if path and len(path) > 0:
                     # Переупорядочиваем sample согласно оптимальному порядку
@@ -584,15 +797,35 @@ class WarehouseGUI:
 
         # Создаем увеличенное изображение для размещения информации
         map_width, map_height = self.map_image.size
-        info_width = 400
+        info_width = 500
         final_width = map_width + info_width
-        final_height = max(map_height, 600)
+        final_height = max(map_height, 800)
 
         final_img = Image.new("RGB", (final_width, final_height), "white")
 
-        # Копируем карту с маршрутом
-        route_img = self.map_image.copy()
-        draw_route = ImageDraw.Draw(route_img)
+        # Создаем ЧИСТУЮ карту без START/FINISH для маршрута
+        if hasattr(self.map_processor, 'original_grid'):
+            img_array = (1 - self.map_processor.original_grid) * 255
+        else:
+            img_array = (1 - self.map_processor.grid) * 255
+        clean_map = Image.fromarray(img_array.astype(np.uint8), mode="L")
+        clean_map = clean_map.convert("RGB")
+        
+        draw_clean = ImageDraw.Draw(clean_map)
+        
+        # Рисуем только товары на чистой карте
+        for product_id, (x, y) in self.route_optimizer.placed_products.items():
+            if product_id in self.route_optimizer.access_points:
+                draw_clean.ellipse([x - 3, y - 3, x + 3, y + 3], fill="yellow", outline="orange")
+                access_x, access_y = self.route_optimizer.access_points[product_id]
+                draw_clean.ellipse([access_x - 2, access_y - 2, access_x + 2, access_y + 2], fill="lightgreen", outline="green")
+                draw_clean.line([x, y, access_x, access_y], fill="lightblue", width=1)
+            else:
+                draw_clean.ellipse([x - 3, y - 3, x + 3, y + 3], fill="orange", outline="red")
+            draw_clean.text((x + 5, y - 5), product_id, fill="blue")
+
+        # Теперь рисуем маршрут на чистой карте
+        draw_route = ImageDraw.Draw(clean_map)
 
         # Рисование пути
         if len(path) > 1:
@@ -617,7 +850,7 @@ class WarehouseGUI:
                     draw_route.line([ax, ay, x, y], fill="orange", width=1)
                     draw_route.ellipse([x - 4, y - 4, x + 4, y + 4], fill="yellow", outline="red")
 
-        # Отметка старта и финиша
+        # Отметка старта и финиша (рисуем только один раз)
         if self.start_point:
             x, y = self.start_point
             draw_route.ellipse(
@@ -632,7 +865,18 @@ class WarehouseGUI:
             )
             draw_route.text((x + 8, y - 8), "FINISH", fill="red")
 
-        final_img.paste(route_img, (0, 0))
+        # Уменьшаем карту и подготавливаем с рамкой
+        route_scale_factor = 0.8
+        route_img_resized = clean_map.resize(
+            (int(map_width * route_scale_factor), int(map_height * route_scale_factor)), 
+            Image.Resampling.LANCZOS
+        )
+        
+        # Добавляем рамку вокруг карты
+        bordered_map = Image.new("RGB", 
+                                (route_img_resized.width + 4, route_img_resized.height + 4), 
+                                "black")
+        bordered_map.paste(route_img_resized, (2, 2))
 
         # Информационная панель
         draw = ImageDraw.Draw(final_img)
@@ -640,62 +884,104 @@ class WarehouseGUI:
         try:
             font_title = ImageFont.truetype("arial.ttf", 16)
             font_normal = ImageFont.truetype("arial.ttf", 12)
+            font_small = ImageFont.truetype("arial.ttf", 10)
         except:
             font_title = ImageFont.load_default()
             font_normal = ImageFont.load_default()
+            font_small = ImageFont.load_default()
 
-        info_x = map_width + 10
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # БЛОК 1: Информация о выборке (левый верхний угол)
         y_pos = 10
-
-        draw.text(
-            (info_x, y_pos), f"МАРШРУТ #{route_id}", fill="black", font=font_title
-        )
-        y_pos += 30
-
-        draw.line([(info_x, y_pos), (final_width - 10, y_pos)], fill="gray", width=1)
-        y_pos += 10
-
-        draw.text(
-            (info_x, y_pos),
-            f"Расстояние: {distance:.2f} м",
-            fill="black",
-            font=font_normal,
-        )
-        y_pos += 20
-        draw.text(
-            (info_x, y_pos), f"Точек пути: {len(path)}", fill="black", font=font_normal
-        )
-        y_pos += 20
-        draw.text(
-            (info_x, y_pos), f"Товаров: {len(products)}", fill="black", font=font_normal
-        )
-        y_pos += 30
-
-        draw.line([(info_x, y_pos), (final_width - 10, y_pos)], fill="gray", width=1)
-        y_pos += 10
-
-        draw.text((info_x, y_pos), "ТОВАРЫ ДЛЯ СБОРА:", fill="black", font=font_title)
+        draw.text((10, y_pos), f"ВЫБОРКА #{route_id}", fill="black", font=font_title)
         y_pos += 25
+        draw.text((10, y_pos), f"Расстояние: {distance:.2f} м", fill="black", font=font_normal)
+        y_pos += 18
+        draw.text((10, y_pos), f"Товаров: {len(products)}", fill="black", font=font_normal)
+        y_pos += 18
+        draw.text((10, y_pos), f"Создано: {timestamp}", fill="gray", font=font_small)
 
-        # Список товаров с фото
+        # РАЗМЕЩЕНИЕ КАРТЫ ПОД БЛОКОМ "ВЫБОРКА #"
+        map_margin = 20
+        # ЗДЕСЬ МЕНЯЕТСЯ ПОЗИЦИЯ КАРТЫ:
+        route_y_pos = 120  # Под информацией о выборке (вместо final_height - bordered_map.height - map_margin)
+        final_img.paste(bordered_map, (map_margin, route_y_pos))
+
+        # Вычисляем позицию для списка товаров (справа от карты с отступом)
+        map_right_edge = map_margin + bordered_map.width
+        gap_between = 30
+        info_x = map_right_edge + gap_between
+
+        # БЛОК 2: Список товаров (справа от карты)
+        products_y_start = 10
+        y_pos = products_y_start
+        draw.text((info_x, y_pos), "ТОВАРЫ ДЛЯ СБОРА:", fill="black", font=font_title)
+        y_pos += 30
+
+        # Функция для переноса длинных названий
+        def wrap_text(text, max_length=30):
+            if len(text) <= max_length:
+                return [text]
+            words = text.split()
+            lines = []
+            current_line = ""
+            for word in words:
+                if len(current_line + " " + word) <= max_length:
+                    current_line += " " + word if current_line else word
+                else:
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = word
+            if current_line:
+                lines.append(current_line)
+            return lines
+
+        # Список товаров - показываем ВСЕ товары
         for idx, product_id in enumerate(products, 1):
             if product_id in self.route_optimizer.products:
                 product = self.route_optimizer.products[product_id]
 
+                # Проверяем, не нужно ли увеличить высоту изображения
+                estimated_height_needed = y_pos + 150  # Оценка места под товар
+                if estimated_height_needed > final_height:
+                    # Увеличиваем изображение
+                    new_height = estimated_height_needed + 100
+                    new_img = Image.new("RGB", (final_width, new_height), "white")
+                    
+                    # Копируем только нарисованную часть (БЕЗ карты, чтобы избежать дублирования)
+                    draw_area = final_img.crop((0, 0, final_width, final_height))
+                    new_img.paste(draw_area, (0, 0))
+                    
+                    final_img = new_img
+                    final_height = new_height
+                    draw = ImageDraw.Draw(final_img)
+                    
+                    # Перерисовываем карту в той же позиции (она не сдвигается)
+                    final_img.paste(bordered_map, (map_margin, route_y_pos))
+
+                # ID товара
                 draw.text(
                     (info_x, y_pos),
-                    f"{idx}. {product.id}",
+                    f"{idx}. ID {product.id}",
                     fill="black",
                     font=font_normal,
                 )
-                y_pos += 18
-                draw.text(
-                    (info_x + 20, y_pos),
-                    f"{product.name}",
-                    fill="gray",
-                    font=font_normal,
-                )
-                y_pos += 18
+                y_pos += 20
+                
+                # Название товара с переносом
+                wrapped_name = wrap_text(product.name, 30)
+                for line in wrapped_name:
+                    draw.text(
+                        (info_x + 20, y_pos),
+                        line,
+                        fill="gray",
+                        font=font_normal,
+                    )
+                    y_pos += 15
+                
+                y_pos += 5
 
                 # Фото товара
                 photo_path = f"data/photos/{product.id}.jpg"
@@ -705,39 +991,194 @@ class WarehouseGUI:
                 if Path(photo_path).exists():
                     try:
                         product_img = Image.open(photo_path)
-                        product_img.thumbnail((60, 60), Image.Resampling.LANCZOS)
+                        product_img.thumbnail((70, 70), Image.Resampling.LANCZOS)
                         final_img.paste(product_img, (info_x + 20, y_pos))
-                        y_pos += 65
+                        y_pos += 75
                     except:
                         y_pos += 5
                 else:
                     draw.rectangle(
-                        [(info_x + 20, y_pos), (info_x + 80, y_pos + 60)],
+                        [(info_x + 20, y_pos), (info_x + 90, y_pos + 70)],
                         outline="gray",
                         width=1,
                     )
-                    draw.text((info_x + 35, y_pos + 25), "Нет\nфото", fill="gray")
-                    y_pos += 65
+                    draw.text((info_x + 40, y_pos + 30), "Нет\nфото", fill="gray")
+                    y_pos += 75
 
-                y_pos += 10
-
-                if y_pos > final_height - 50:
-                    draw.text((info_x, y_pos), "...", fill="gray")
-                    break
-
-        from datetime import datetime
-
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        draw.text(
-            (info_x, final_height - 30),
-            f"Создано: {timestamp}",
-            fill="gray",
-            font=font_normal,
-        )
+                y_pos += 15
 
         filepath = f"output/routes/route_{route_id}.png"
         final_img.save(filepath)
         print(f"Изображение маршрута сохранено: {filepath}")
+
+    def save_session_metadata(self):
+        """Сохранение метаданных сессии (включая точки старта/финиша)"""
+        if not hasattr(self, 'current_map_path'):
+            return
+            
+        import json
+        from pathlib import Path
+        
+        metadata = {
+            "map_file": self.current_map_path,
+            "scale": self.map_processor.scale,
+            "robot_radius_meters": self.map_processor.robot_radius_meters,
+            "scale_set": self.scale_set,
+            "robot_radius_set": self.robot_radius_set,
+            "start_point": self.start_point,
+            "end_point": self.end_point
+        }
+        
+        # Сохраняем рядом с картой
+        map_path = Path(self.current_map_path)
+        session_path = map_path.parent / f"{map_path.stem}_session.json"
+        
+        with open(session_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
+        print(f"Метаданные сессии сохранены: {session_path}")
+    
+    def load_session_metadata(self):
+        """Загрузка метаданных сессии"""
+        if not hasattr(self, 'current_map_path'):
+            return False
+            
+        import json
+        from pathlib import Path
+        
+        map_path = Path(self.current_map_path)
+        session_path = map_path.parent / f"{map_path.stem}_session.json"
+        
+        if not session_path.exists():
+            print(f"Файл сессии не найден: {session_path}")
+            return False
+        
+        try:
+            with open(session_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+            
+            # Загружаем настройки масштаба и радиуса
+            if metadata.get("scale_set", False):
+                self.map_processor.scale = metadata.get("scale", 0.1)
+                self.scale_set = True
+            
+            if metadata.get("robot_radius_set", False):
+                self.map_processor.robot_radius_meters = metadata.get("robot_radius_meters", 0.3)
+                self.map_processor._update_robot_radius_pixels()
+                # Пересчитываем препятствия с новым радиусом
+                if hasattr(self.map_processor, 'original_grid'):
+                    self.map_processor.grid = self.map_processor._expand_obstacles(self.map_processor.original_grid)
+                self.robot_radius_set = True
+            
+            # Загружаем точки старта и финиша
+            self.start_point = tuple(metadata["start_point"]) if metadata.get("start_point") else None
+            self.end_point = tuple(metadata["end_point"]) if metadata.get("end_point") else None
+            
+            self.update_status()
+            self.display_map()
+            
+            print(f"Сессия восстановлена: масштаб={self.map_processor.scale:.4f}, радиус={self.map_processor.robot_radius_meters}м")
+            if self.start_point and self.end_point:
+                print(f"Точки маршрута: старт={self.start_point}, финиш={self.end_point}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Ошибка загрузки сессии: {e}")
+            return False
+    
+    def save_settings_manual(self):
+        """Ручное сохранение настроек"""
+        if not hasattr(self, 'current_map_path'):
+            messagebox.showwarning("Предупреждение", "Сначала загрузите карту")
+            return
+            
+        filepath = filedialog.asksaveasfilename(
+            title="Сохранить настройки",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile=f"{Path(self.current_map_path).stem}_settings.json"
+        )
+        
+        if filepath:
+            try:
+                import json
+                settings = {
+                    "map_file": self.current_map_path,
+                    "scale": self.map_processor.scale,
+                    "robot_radius_meters": self.map_processor.robot_radius_meters,
+                    "scale_set": self.scale_set,
+                    "robot_radius_set": self.robot_radius_set,
+                    "start_point": self.start_point,
+                    "end_point": self.end_point,
+                    "description": f"Настройки для карты {Path(self.current_map_path).name}"
+                }
+                
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(settings, f, indent=2, ensure_ascii=False)
+                
+                messagebox.showinfo("Успех", f"Настройки сохранены в {filepath}")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось сохранить настройки: {e}")
+    
+    def load_settings_manual(self):
+        """Ручная загрузка настроек"""
+        filepath = filedialog.askopenfilename(
+            title="Загрузить настройки",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        
+        if filepath:
+            try:
+                import json
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                
+                # Проверяем, существует ли файл карты
+                map_file = settings.get("map_file")
+                if map_file and not Path(map_file).exists():
+                    if not messagebox.askyesno(
+                        "Файл карты не найден", 
+                        f"Файл карты {map_file} не найден.\nПродолжить загрузку настроек без карты?"
+                    ):
+                        return
+                
+                # Загружаем настройки
+                if settings.get("scale_set", False):
+                    self.map_processor.scale = settings.get("scale", 0.1)
+                    self.scale_set = True
+                
+                if settings.get("robot_radius_set", False):
+                    self.map_processor.robot_radius_meters = settings.get("robot_radius_meters", 0.3)
+                    self.map_processor._update_robot_radius_pixels()
+                    if hasattr(self.map_processor, 'original_grid'):
+                        self.map_processor.grid = self.map_processor._expand_obstacles(self.map_processor.original_grid)
+                    self.robot_radius_set = True
+                
+                # Загружаем точки маршрута
+                self.start_point = tuple(settings["start_point"]) if settings.get("start_point") else None
+                self.end_point = tuple(settings["end_point"]) if settings.get("end_point") else None
+                
+                self.update_status()
+                self.display_map()
+                
+                messagebox.showinfo("Успех", "Настройки загружены")
+                
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось загрузить настройки: {e}")
+    
+    def clear_route_points(self):
+        """Очистка точек маршрута"""
+        if messagebox.askyesno("Подтверждение", "Очистить точки старта и финиша?"):
+            self.start_point = None
+            self.end_point = None
+            self.display_map()
+            
+            # Автосохранение
+            if hasattr(self, 'current_map_path'):
+                self.save_session_metadata()
+            
+            self.info_label.config(text="Точки маршрута очищены")
 
     def view_routes(self):
         """Просмотр сохраненных маршрутов"""
