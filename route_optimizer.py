@@ -147,3 +147,44 @@ class RouteOptimizer:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(info, f, ensure_ascii=False, indent=2)
         print(f"Информация о маршруте сохранена: {filepath}")
+
+    def export_routes_to_csv(self, filepath: str = "output/routes/routes_summary.csv"):
+        """Экспорт всех маршрутов в CSV таблицу"""
+        import glob
+        import json
+        
+        route_files = glob.glob("output/routes/route_*_info.json")
+        if not route_files:
+            raise ValueError("Нет сохраненных маршрутов для экспорта")
+        
+        routes_data = []
+        for file in sorted(route_files):
+            with open(file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                routes_data.append(data)
+        
+        max_products = max(len(route['products']) for route in routes_data)
+        
+        headers = ["№ Выборки"]
+        for i in range(1, max_products + 1):
+            headers.extend([f"ID Товара {i}", f"Название товара {i}"])
+        headers.append("Длина пути в метрах")
+        
+        with open(filepath, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            
+            for route in routes_data:
+                row = [route['route_id']]
+                
+                for i in range(max_products):
+                    if i < len(route['product_details']):
+                        product = route['product_details'][i]
+                        row.extend([product['id'], product['name']])
+                    else:
+                        row.extend(["", ""])
+                
+                row.append(route['distance_meters'])
+                writer.writerow(row)
+        
+        return len(routes_data)

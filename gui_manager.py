@@ -70,6 +70,9 @@ class WarehouseGUI:
         tk.Button(
             control_frame2, text="Просмотр маршрутов", command=self.view_routes
         ).pack(side=tk.LEFT, padx=2)
+        tk.Button(
+            control_frame2, text="Экспорт в CSV", command=self.export_csv
+        ).pack(side=tk.LEFT, padx=2)
 
         # Панель управления - третья строка (настройки)
         control_frame3 = tk.Frame(self.root)
@@ -122,6 +125,16 @@ class WarehouseGUI:
         self.canvas.bind("<Motion>", self.on_mouse_move)
 
         self.update_status()
+    
+    def export_csv(self):
+        """Экспорт всех маршрутов в CSV"""
+        try:
+            count = self.route_optimizer.export_routes_to_csv()
+            messagebox.showinfo("Успех", f"Экспортировано {count} маршрутов в output/routes/routes_summary.csv")
+        except ValueError as e:
+            messagebox.showwarning("Внимание", str(e))
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка экспорта: {e}")
 
     def update_status(self):
         """Обновление статусной строки"""
