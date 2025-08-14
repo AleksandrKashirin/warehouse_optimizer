@@ -750,7 +750,7 @@ class WarehouseGUI:
             print(f"Эффективность: {stats['efficiency_score']:.1%}")
             for night_info in stats['nights']:
                 print(f"Ночь {night_info['night']}: {night_info['unique_products']} товаров, "
-                    f"{night_info['avg_transitions_per_experiment']:.1f} смен за эксперимент")
+                        f"{night_info['avg_changes_per_experiment']:.1f} смен за эксперимент")
 
             # 5. Генерируем маршруты в оптимизированном порядке
             self._process_routes(optimized_samples, "генерации с ограничениями и оптимизацией")
@@ -837,7 +837,7 @@ class WarehouseGUI:
         Path("output/routes").mkdir(parents=True, exist_ok=True)
 
         map_width, map_height = self.map_image.size
-        info_width = 150
+        info_width = 100
         final_width = map_width + info_width
         final_height = max(map_height, 800)
 
@@ -909,9 +909,9 @@ class WarehouseGUI:
         draw = ImageDraw.Draw(final_img)
 
         try:
-            font_title = ImageFont.truetype("arial.ttf", 16)
-            font_normal = ImageFont.truetype("arial.ttf", 12)
-            font_small = ImageFont.truetype("arial.ttf", 10)
+            font_title = ImageFont.truetype("arial.ttf", 20)
+            font_normal = ImageFont.truetype("arial.ttf", 16)
+            font_small = ImageFont.truetype("arial.ttf", 14)
         except:
             font_title = ImageFont.load_default()
             font_normal = ImageFont.load_default()
@@ -1168,8 +1168,8 @@ class WarehouseGUI:
             result_text += f"\n=== НОЧЬ {night_info['night']} ===\n"
             result_text += f"Экспериментов: {night_info['experiments']}\n"
             result_text += f"Уникальных товаров: {night_info['unique_products']}\n"
-            result_text += f"Общее количество смен товаров: {night_info['total_transitions']}\n"
-            result_text += f"Среднее количество смен за эксперимент: {night_info['avg_transitions_per_experiment']:.1f}\n"
+            result_text += f"Общее количество смен товаров: {night_info['total_changes']}\n"
+            result_text += f"Среднее количество смен за эксперимент: {night_info['avg_changes_per_experiment']:.1f}\n"
             result_text += f"Товары: {', '.join(night_info['products'])}\n"
             result_text += "\n"
         
@@ -1210,8 +1210,36 @@ class WarehouseGUI:
                     f.write(f"Эффективность: {stats['efficiency_score']:.1%}\n")
                 
                 messagebox.showinfo("Успех", f"План сохранен в {filepath}")
-        
+
+        def save_report():
+            filepath = filedialog.asksaveasfilename(
+                title="Сохранить отчет оптимизации",
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+            )
+            if filepath:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write("ОТЧЕТ ПО ОПТИМИЗАЦИИ ВЫБОРОК\n")
+                    f.write("=" * 50 + "\n\n")
+                    
+                    f.write("ОБЩАЯ СТАТИСТИКА:\n")
+                    f.write(f"Всего уникальных товаров: {stats['total_unique_products']}\n")
+                    f.write(f"Среднее количество товаров за ночь: {stats['avg_products_per_night']:.1f}\n")
+                    f.write(f"Эффективность оптимизации: {stats['efficiency_score']:.1%}\n\n")
+                    
+                    for night_info in stats['nights']:
+                        f.write(f"=== НОЧЬ {night_info['night']} ===\n")
+                        f.write(f"Экспериментов: {night_info['experiments']}\n")
+                        f.write(f"Уникальных товаров: {night_info['unique_products']}\n")
+                        f.write(f"Общее количество смен товаров: {night_info['total_changes']}\n")
+                        f.write(f"Среднее количество смен за эксперимент: {night_info['avg_changes_per_experiment']:.1f}\n")
+                        f.write(f"Эффективность ночи: {night_info['efficiency']:.1%}\n")
+                        f.write(f"Товары: {', '.join(night_info['products'])}\n\n")
+                
+                messagebox.showinfo("Успех", f"Отчет сохранен в {filepath}")
+
         tk.Button(button_frame, text="Сохранить план", command=save_optimized).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Сохранить отчет", command=save_report).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Закрыть", command=result_window.destroy).pack(side=tk.RIGHT, padx=5)
 
 if __name__ == "__main__":

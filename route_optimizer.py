@@ -290,15 +290,68 @@ class RouteOptimizer:
         return len(routes_data)
     
     def optimize_samples_order(self, samples: List[List[str]], group_size: int = 15) -> List[List[str]]:
-        """Оптимизация порядка выборок для минимизации различий между соседними"""
+        """Улучшенная оптимизация порядка выборок"""
+        if not samples:
+            return samples
+        
+        # Разбиваем на группы (ночи) и оптимизируем каждую отдельно
+        groups = []
+        for i in range(0, len(samples), group_size):
+            group = samples[i:i + group_size]
+            groups.append(group)
+        
+        optimized_groups = []
+        for group_idx, group in enumerate(groups):
+            print(f"Оптимизирую ночь {group_idx + 1}: {len(group)} выборок...")
+            optimized_group = self._optimize_single_group(group)
+            optimized_groups.append(optimized_group)
+        
+        # Объединяем обратно
+        result = []
+        for group in optimized_groups:
+            result.extend(group)
+        
+        return result
+
+    def _optimize_single_group(self, samples: List[List[str]]) -> List[List[str]]:
+        """Оптимизация одной группы (ночи)"""
+        if len(samples) <= 1:
+            return samples
+        
+        best_order = None
+        best_score = float('inf')
+        
+        # Пробуем несколько разных стартовых точек
+        num_attempts = min(len(samples), 5)  # Не больше 5 попыток
+        for attempt in range(num_attempts):
+            # Жадный алгоритм с разными стартовыми точками
+            current_order = self._greedy_optimize_group(samples, start_idx=attempt)
+            
+            # Локальные улучшения (2-opt)
+            improved_order = self._local_improvement_2opt(current_order)
+            
+            # Оцениваем качество
+            score = self._calculate_group_score(improved_order)
+            
+            if score < best_score:
+                best_score = score
+                best_order = improved_order
+        
+        return best_order
+
+    def _greedy_optimize_group(self, samples: List[List[str]], start_idx: int = 0) -> List[List[str]]:
+        """Жадный алгоритм для одной группы с выбором стартовой точки"""
         if not samples:
             return samples
         
         optimized = []
         remaining = samples.copy()
         
-        # Начинаем с первой выборки
-        current = remaining.pop(0)
+        # Начинаем с лучшей стартовой точки
+        if start_idx < len(remaining):
+            current = remaining.pop(start_idx)
+        else:
+            current = remaining.pop(0)
         optimized.append(current)
         
         while remaining:
@@ -306,7 +359,7 @@ class RouteOptimizer:
             best_overlap = -1
             best_index = -1
             
-            # Ищем выборку с максимальным пересечением с текущей
+            # Ищем выборку с максимальным пересечением
             for i, candidate in enumerate(remaining):
                 overlap = len(set(current) & set(candidate))
                 if overlap > best_overlap:
@@ -314,16 +367,61 @@ class RouteOptimizer:
                     best_next = candidate
                     best_index = i
             
-            # Добавляем лучшую найденную выборку
             if best_next is not None:
                 current = remaining.pop(best_index)
                 optimized.append(current)
             else:
-                # Если не нашли пересечений, берем любую
                 current = remaining.pop(0)
                 optimized.append(current)
         
         return optimized
+
+    def _local_improvement_2opt(self, samples: List[List[str]]) -> List[List[str]]:
+        """Локальные улучшения методом 2-opt"""
+        improved = samples.copy()
+        n = len(improved)
+        
+        if n <= 2:
+            return improved
+        
+        improved_found = True
+        while improved_found:
+            improved_found = False
+            current_score = self._calculate_group_score(improved)
+            
+            # Пробуем все возможные обмены соседних пар
+            for i in range(n - 1):
+                for j in range(i + 2, min(i + 6, n)):  # Ограничиваем область поиска
+                    # Пробуем обратить участок от i до j
+                    new_order = improved.copy()
+                    new_order[i:j+1] = reversed(new_order[i:j+1])
+                    
+                    new_score = self._calculate_group_score(new_order)
+                    if new_score < current_score:
+                        improved = new_order
+                        current_score = new_score
+                        improved_found = True
+                        break
+                
+                if improved_found:
+                    break
+        
+        return improved
+
+    def _calculate_group_score(self, samples: List[List[str]]) -> float:
+        """Вычисляет общий счет группы (меньше = лучше)"""
+        if len(samples) <= 1:
+            return 0
+        
+        total_changes = 0
+        for i in range(len(samples) - 1):
+            current_set = set(samples[i])
+            next_set = set(samples[i + 1])
+            # Количество изменений = товары которые нужно убрать + товары которые нужно добавить
+            changes = len(current_set - next_set) + len(next_set - current_set)
+            total_changes += changes
+        
+        return total_changes
 
     def group_samples_by_nights(self, samples: List[List[str]], group_size: int = 15) -> List[List[List[str]]]:
         """Разбивка выборок на группы (ночи)"""
@@ -344,40 +442,46 @@ class RouteOptimizer:
         
         all_products = set()
         night_products_counts = []
+        total_changes = 0
+        total_possible_changes = 0
         
         for night_idx, night_samples in enumerate(groups):
             night_products = set()
-            transitions = 0  # Количество смен товаров между соседними выборками
+            night_changes = 0
             
             for sample in night_samples:
                 night_products.update(sample)
             
-            # Считаем переходы между соседними выборками
+            # Считаем изменения между соседними выборками
             for i in range(len(night_samples) - 1):
                 current_set = set(night_samples[i])
                 next_set = set(night_samples[i + 1])
-                changes = len(current_set.symmetric_difference(next_set))
-                transitions += changes
+                # Изменения = убрать + добавить
+                changes = len(current_set - next_set) + len(next_set - current_set)
+                night_changes += changes
+            
+            # Максимально возможные изменения для этой ночи
+            max_changes_night = (len(night_samples) - 1) * 10  # Если бы все товары были разные
             
             night_info = {
                 'night': night_idx + 1,
                 'experiments': len(night_samples),
                 'unique_products': len(night_products),
-                'total_transitions': transitions,
-                'avg_transitions_per_experiment': transitions / len(night_samples) if night_samples else 0,
+                'total_changes': night_changes,
+                'max_possible_changes': max_changes_night,
+                'efficiency': 1 - (night_changes / max_changes_night) if max_changes_night > 0 else 1,
+                'avg_changes_per_experiment': night_changes / (len(night_samples) - 1) if len(night_samples) > 1 else 0,
                 'products': sorted(list(night_products))
             }
             
             stats['nights'].append(night_info)
             all_products.update(night_products)
             night_products_counts.append(len(night_products))
+            total_changes += night_changes
+            total_possible_changes += max_changes_night
         
         stats['total_unique_products'] = len(all_products)
         stats['avg_products_per_night'] = sum(night_products_counts) / len(night_products_counts) if night_products_counts else 0
-        
-        # Чем меньше переходов, тем лучше эффективность
-        total_transitions = sum(night['total_transitions'] for night in stats['nights'])
-        max_possible_transitions = len(groups) * 15 * 5  # Максимум если все товары разные
-        stats['efficiency_score'] = 1 - (total_transitions / max_possible_transitions) if max_possible_transitions > 0 else 1
+        stats['efficiency_score'] = 1 - (total_changes / total_possible_changes) if total_possible_changes > 0 else 1
         
         return stats
