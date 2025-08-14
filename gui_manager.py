@@ -39,6 +39,8 @@ class WarehouseGUI:
 
         self.optimized_samples = None
 
+        self.auto_load_last_config()
+
     def setup_ui(self):
         # Панель управления - первая строка
         control_frame1 = tk.Frame(self.root)
@@ -75,7 +77,6 @@ class WarehouseGUI:
         
         tk.Button(control_frame3, text="Сохранить товары", command=self.save_products).pack(side=tk.LEFT, padx=2)
         tk.Button(control_frame3, text="Просмотр маршрутов", command=self.view_routes).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame3, text="Экспорт в CSV", command=self.export_csv).pack(side=tk.LEFT, padx=2)
 
         # Информационная панель
         info_frame = tk.Frame(self.root)
@@ -175,11 +176,13 @@ class WarehouseGUI:
         )
         if filepath:
             if self.map_processor.load_markup(filepath):
+                self.current_markup_path = filepath
                 self.scale_set = True
                 self.robot_radius_set = True
                 self.update_status()
                 self.display_map()
                 messagebox.showinfo("Успех", "Разметка загружена")
+                self.save_current_config()
             else:
                 messagebox.showerror("Ошибка", "Не удалось загрузить разметку")
 
@@ -207,7 +210,7 @@ class WarehouseGUI:
                 self.info_label.config(
                     text=f"Карта загружена: {self.map_processor.width}x{self.map_processor.height} пикселей"
                 )
-                
+                self.save_current_config()
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось загрузить карту: {e}")
 
@@ -375,6 +378,7 @@ class WarehouseGUI:
         )
         if filepath:
             try:
+                self.current_products_path = filepath
                 self.route_optimizer.load_products(filepath)
                 self.display_map()
                 self.update_status()  # Важно обновить статус после загрузки
@@ -390,6 +394,7 @@ class WarehouseGUI:
                     info_text += f", с количеством: {with_amount}, общее количество: {total_amount}"
                     
                 self.info_label.config(text=info_text)
+                self.save_current_config() 
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось загрузить товары: {e}")
 
@@ -566,6 +571,7 @@ class WarehouseGUI:
                         text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
                     )
                     self.mode = "view"
+                    self.save_current_config()
                 else:
                     nearest = self.map_processor.find_nearest_walkable(ix, iy, max_radius=10)
                     if nearest:
@@ -575,6 +581,7 @@ class WarehouseGUI:
                             text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
                         )
                         self.mode = "view"
+                        self.save_current_config()
                     else:
                         messagebox.showwarning(
                             "Внимание",
@@ -1240,7 +1247,72 @@ class WarehouseGUI:
 
         tk.Button(button_frame, text="Сохранить план", command=save_optimized).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Сохранить отчет", command=save_report).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Экспорт CSV", command=self.export_csv).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Закрыть", command=result_window.destroy).pack(side=tk.RIGHT, padx=5)
+    
+    def auto_load_last_config(self):
+        """Автоматическая загрузка последней конфигурации"""
+        config = self.route_optimizer.load_config()
+        if not config:
+            return
+        
+        try:
+            # Загружаем карту
+            if config.get('map_path') and Path(config['map_path']).exists():
+                self.current_map_path = config['map_path']
+                self.map_processor.load_map(config['map_path'])
+                
+            # Загружаем товары
+            if config.get('products_path') and Path(config['products_path']).exists():
+                self.route_optimizer.load_products(config['products_path'])
+                self.current_products_path = config['products_path']
+                
+            # Загружаем разметку
+            if config.get('markup_path') and Path(config['markup_path']).exists():
+                self.map_processor.load_markup(config['markup_path'])
+                self.current_markup_path = config['markup_path']
+                
+            # Восстанавливаем точки старт/финиш
+            start_point = config.get('start_point')
+            end_point = config.get('end_point')
+            self.start_point = tuple(start_point) if start_point and len(start_point) == 2 else None
+            self.end_point = tuple(end_point) if end_point and len(end_point) == 2 else None
+            self.scale_set = config.get('scale_set', False)
+            self.robot_radius_set = config.get('robot_radius_set', False)
+            
+            self.update_status()
+            self.display_map()
+            
+            # Обновляем информацию
+            count = len(self.route_optimizer.products)
+            placed = len(self.route_optimizer.placed_products)
+            access_count = len(self.route_optimizer.access_points)
+            
+            info_text = f"Конфигурация загружена: {count} товаров, {placed} размещено, {access_count} с доступом"
+            if self.route_optimizer.has_amount_data():
+                with_amount = sum(1 for p in self.route_optimizer.products.values() if p.amount > 0)
+                info_text += f", {with_amount} с количеством"
+                
+            self.info_label.config(text=info_text)
+            
+        except Exception as e:
+            print(f"Ошибка загрузки конфигурации: {e}")
+
+    def save_current_config(self):
+        """Сохранение текущей конфигурации"""
+        config = {
+            "map_path": getattr(self, 'current_map_path', ''),
+            "products_path": getattr(self, 'current_products_path', ''),
+            "markup_path": getattr(self, 'current_markup_path', ''),
+            "start_point": self.start_point,
+            "end_point": self.end_point,
+            "scale_set": self.scale_set,
+            "robot_radius_set": self.robot_radius_set
+        }
+        
+        Path("data").mkdir(exist_ok=True)
+        with open("data/last_config.json", 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
 
 if __name__ == "__main__":
     root = tk.Tk()

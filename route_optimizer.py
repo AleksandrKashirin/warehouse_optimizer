@@ -249,7 +249,7 @@ class RouteOptimizer:
         print(f"Информация о маршруте сохранена: {filepath}")
 
     def export_routes_to_csv(self, filepath: str = "output/routes/routes_summary.csv"):
-        """Экспорт всех маршрутов в CSV таблицу"""
+        """Экспорт всех маршрутов в упрощенный CSV"""
         import glob
         import json
         
@@ -258,17 +258,17 @@ class RouteOptimizer:
             raise ValueError("Нет сохраненных маршрутов для экспорта")
         
         routes_data = []
-        for file in sorted(route_files):
+        for file in sorted(route_files, key=lambda x: int(x.split('_')[1])):
             with open(file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 routes_data.append(data)
         
         max_products = max(len(route['products']) for route in routes_data)
         
+        # Упрощенные заголовки - только ID товаров
         headers = ["№ Выборки"]
         for i in range(1, max_products + 1):
-            headers.extend([f"ID Товара {i}", f"Название товара {i}"])
-        headers.append("Длина пути в метрах")
+            headers.append(f"Товар {i}")
         
         with open(filepath, 'w', encoding='utf-8', newline='') as f:
             writer = csv.writer(f)
@@ -277,14 +277,13 @@ class RouteOptimizer:
             for route in routes_data:
                 row = [route['route_id']]
                 
+                # Только ID товаров
                 for i in range(max_products):
-                    if i < len(route['product_details']):
-                        product = route['product_details'][i]
-                        row.extend([product['id'], product['name']])
+                    if i < len(route['products']):
+                        row.append(route['products'][i])
                     else:
-                        row.extend(["", ""])
+                        row.append("")
                 
-                row.append(route['distance_meters'])
                 writer.writerow(row)
         
         return len(routes_data)
@@ -415,11 +414,19 @@ class RouteOptimizer:
         
         total_changes = 0
         for i in range(len(samples) - 1):
-            current_set = set(samples[i])
-            next_set = set(samples[i + 1])
-            # Количество изменений = товары которые нужно убрать + товары которые нужно добавить
-            changes = len(current_set - next_set) + len(next_set - current_set)
-            total_changes += changes
+            try:
+                current_set = set(samples[i])
+                next_set = set(samples[i + 1])
+                # Количество изменений = товары которые нужно убрать + товары которые нужно добавить
+                changes = len(current_set - next_set) + len(next_set - current_set)
+                total_changes += changes
+            except TypeError as e:
+                # Если ошибка с типами, выводим отладочную информацию
+                print(f"Ошибка в _calculate_group_score: {e}")
+                print(f"samples[{i}]: {samples[i]}")
+                print(f"samples[{i+1}]: {samples[i+1]}")
+                print(f"Тип samples[{i}][0]: {type(samples[i][0]) if samples[i] else 'empty'}")
+                raise
         
         return total_changes
 
@@ -430,6 +437,33 @@ class RouteOptimizer:
             group = samples[i:i + group_size]
             groups.append(group)
         return groups
+    
+    def save_config(self, config_path: str = "data/last_config.json"):
+        """Сохранение текущей конфигурации"""
+        config = {
+            "map_path": getattr(self, 'current_map_path', ''),
+            "products_path": getattr(self, 'current_products_path', ''),
+            "markup_path": getattr(self, 'current_markup_path', ''),
+            "start_point": getattr(self, 'start_point', None),
+            "end_point": getattr(self, 'end_point', None),
+            "scale_set": getattr(self, 'scale_set', False),
+            "robot_radius_set": getattr(self, 'robot_radius_set', False)
+        }
+        
+        Path("data").mkdir(exist_ok=True)
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+
+    def load_config(self, config_path: str = "data/last_config.json") -> Dict:
+        """Загрузка конфигурации"""
+        if not Path(config_path).exists():
+            return {}
+        
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
 
     def analyze_night_efficiency(self, groups: List[List[List[str]]]) -> Dict:
         """Анализ эффективности группировки по ночам"""
