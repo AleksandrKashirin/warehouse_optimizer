@@ -17,6 +17,7 @@ venv/
 # Project specific
 data/*.bmp
 data/*.json
+data/*.txt
 data/photos/*.jpg
 data/photos/*.png
 output/routes/*.png
