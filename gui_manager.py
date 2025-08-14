@@ -65,6 +65,12 @@ class WarehouseGUI:
 
         tk.Button(control_frame3, text="Установить старт/финиш", command=self.set_route_points_mode).pack(side=tk.LEFT, padx=2)
         tk.Button(control_frame3, text="Генерировать маршруты", command=self.generate_routes).pack(side=tk.LEFT, padx=2)
+        
+        # НОВАЯ КНОПКА для генерации с ограничениями
+        self.generate_limited_btn = tk.Button(control_frame3, text="Генерировать с ограничениями", 
+                                            command=self.generate_routes_with_limits, bg="lightblue")
+        self.generate_limited_btn.pack(side=tk.LEFT, padx=2)
+        
         tk.Button(control_frame3, text="Сохранить товары", command=self.save_products).pack(side=tk.LEFT, padx=2)
         tk.Button(control_frame3, text="Просмотр маршрутов", command=self.view_routes).pack(side=tk.LEFT, padx=2)
         tk.Button(control_frame3, text="Экспорт в CSV", command=self.export_csv).pack(side=tk.LEFT, padx=2)
@@ -227,6 +233,14 @@ class WarehouseGUI:
         else:
             status_parts.append("Радиус: не задан")
 
+        # Добавляем информацию о наличии данных о количестве
+        if self.route_optimizer.has_amount_data():
+            status_parts.append("Количества: есть")
+            self.generate_limited_btn.config(state="normal")
+        else:
+            status_parts.append("Количества: нет")
+            self.generate_limited_btn.config(state="disabled")
+
         self.status_label.config(text=" | ".join(status_parts))
 
     def set_robot_radius(self):
@@ -271,30 +285,42 @@ class WarehouseGUI:
         placed_count = len(self.route_optimizer.placed_products)
         access_count = len(self.route_optimizer.access_points)
         total_count = len(self.route_optimizer.products)
+        
+        # Подсчет товаров с количеством > 0
+        with_amount = sum(1 for p in self.route_optimizer.products.values() if p.amount > 0)
+        total_amount = sum(p.amount for p in self.route_optimizer.products.values())
 
         info_frame = tk.Frame(selector)
         info_frame.pack(padx=10, pady=5)
+        
+        info_text = f"Размещено: {placed_count}/{total_count} товаров, доступно: {access_count}"
+        if self.route_optimizer.has_amount_data():
+            info_text += f", с количеством: {with_amount}, общее количество: {total_amount}"
+        
         tk.Label(
             info_frame,
-            text=f"Размещено: {placed_count}/{total_count} товаров, доступно: {access_count}",
+            text=info_text,
             font=("Arial", 10, "bold"),
         ).pack()
+        
         if access_count < 5:
             tk.Label(
                 info_frame, text=f"Минимум для маршрутов: 5 товаров с доступом", fg="red"
             ).pack()
+            
         tk.Label(
             info_frame,
             text="Кликайте на СТЕЛЛАЖИ (синие прямоугольники) или рядом с ними",
             fg="blue",
         ).pack()
 
-        listbox = tk.Listbox(selector, width=50, height=20)
+        listbox = tk.Listbox(selector, width=80, height=20)
         listbox.pack(padx=10, pady=10)
 
         for product in self.route_optimizer.products.values():
             status = "✓" if product.id in self.route_optimizer.access_points else ("◐" if product.x >= 0 else "✗")
-            listbox.insert(tk.END, f"{status} {product.id}: {product.name}")
+            amount_info = f" (кол-во: {product.amount})" if product.amount > 0 else ""
+            listbox.insert(tk.END, f"{status} {product.id}: {product.name}{amount_info}")
 
         def on_select():
             selection = listbox.curselection()
@@ -309,15 +335,26 @@ class WarehouseGUI:
 
         def on_cancel():
             self.mode = "view"
-            self.info_label.config(
-                text=f"Размещено товаров: {placed_count}/{total_count}, доступно: {access_count}"
-            )
+            self.update_info_after_placement()
             selector.destroy()
 
         button_frame = tk.Frame(selector)
         button_frame.pack(pady=5)
         tk.Button(button_frame, text="Выбрать", command=on_select).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Завершить", command=on_cancel).pack(side=tk.LEFT, padx=5)
+
+    def update_info_after_placement(self):
+        """Обновление информации после размещения товаров"""
+        placed_count = len(self.route_optimizer.placed_products)
+        access_count = len(self.route_optimizer.access_points)
+        total_count = len(self.route_optimizer.products)
+        
+        info_text = f"Размещено товаров: {placed_count}/{total_count}, доступно: {access_count}"
+        if self.route_optimizer.has_amount_data():
+            with_amount = sum(1 for p in self.route_optimizer.products.values() if p.amount > 0)
+            info_text += f", с количеством: {with_amount}"
+            
+        self.info_label.config(text=info_text)
 
     def set_route_points_mode(self):
         self.mode = "route_points"
@@ -338,12 +375,19 @@ class WarehouseGUI:
             try:
                 self.route_optimizer.load_products(filepath)
                 self.display_map()
+                self.update_status()  # Важно обновить статус после загрузки
+                
                 count = len(self.route_optimizer.products)
                 placed = len(self.route_optimizer.placed_products)
                 access_count = len(self.route_optimizer.access_points)
-                self.info_label.config(
-                    text=f"Загружено товаров: {count}, размещено: {placed}, с доступом: {access_count}"
-                )
+                
+                info_text = f"Загружено товаров: {count}, размещено: {placed}, с доступом: {access_count}"
+                if self.route_optimizer.has_amount_data():
+                    with_amount = sum(1 for p in self.route_optimizer.products.values() if p.amount > 0)
+                    total_amount = sum(p.amount for p in self.route_optimizer.products.values())
+                    info_text += f", с количеством: {with_amount}, общее количество: {total_amount}"
+                    
+                self.info_label.config(text=info_text)
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось загрузить товары: {e}")
 
@@ -545,7 +589,8 @@ class WarehouseGUI:
                 product = self.route_optimizer.get_product_at(ix, iy)
                 if product:
                     access_status = "с доступом" if product.id in self.route_optimizer.access_points else "без доступа"
-                    self.info_label.config(text=f"Товар: {product.id} - {product.name} ({access_status})")
+                    amount_info = f", количество: {product.amount}" if product.amount > 0 else ""
+                    self.info_label.config(text=f"Товар: {product.id} - {product.name} ({access_status}{amount_info})")
                 else:
                     status = (
                         "стеллаж" if self.map_processor.is_shelf(ix, iy) else "проход"
@@ -607,8 +652,8 @@ class WarehouseGUI:
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image)
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
 
-    # Остальные методы остаются без изменений
     def generate_routes(self):
+        """Обычная генерация маршрутов (оригинальный функционал)"""
         if not self.scale_set:
             messagebox.showwarning("Предупреждение", "Сначала установите масштаб карты!")
             return
@@ -638,70 +683,130 @@ class WarehouseGUI:
 
         try:
             samples = self.route_optimizer.generate_samples(num_samples)
-
-            progress = tk.Toplevel(self.root)
-            progress.title("Генерация маршрутов")
-            progress_label = tk.Label(progress, text="Инициализация...")
-            progress_label.pack(padx=20, pady=10)
-            progress_bar = ttk.Progressbar(progress, length=300, mode="determinate", maximum=num_samples)
-            progress_bar.pack(padx=20, pady=10)
-
-            successful_routes = 0
-            failed_routes = 0
-
-            for i, sample in enumerate(samples):
-                progress_label.config(text=f"Обработка маршрута {i+1}/{num_samples}")
-                progress.update()
-
-                coords = self.route_optimizer.get_access_coordinates(sample)
-
-                if len(coords) != len(sample):
-                    failed_routes += 1
-                    progress_bar["value"] = i + 1
-                    progress.update()
-                    continue
-
-                path, distance, order = self.map_processor.find_optimal_route_simple(
-                    self.start_point, coords, self.end_point
-                )
-
-                if path and len(path) > 0:
-                    if order:
-                        ordered_sample = [sample[idx] for idx in order]
-                    else:
-                        ordered_sample = sample
-
-                    self.save_route_image(i + 1, path, ordered_sample, distance)
-                    self.route_optimizer.save_route_info(i + 1, ordered_sample, distance, path)
-                    successful_routes += 1
-                else:
-                    failed_routes += 1
-
-                progress_bar["value"] = i + 1
-                progress.update()
-
-            progress.destroy()
-
-            if successful_routes > 0:
-                messagebox.showinfo(
-                    "Успех",
-                    f"Сгенерировано маршрутов: {successful_routes}\n"
-                    f"Не удалось построить: {failed_routes}\n"
-                    f"Сохранено в: output/routes/",
-                )
-            else:
-                messagebox.showwarning(
-                    "Внимание",
-                    f"Не удалось построить ни одного маршрута.\n"
-                    f"Проверьте:\n"
-                    f"- Точки доступа к товарам (зеленые точки на карте)\n"
-                    f"- Проходимость между стартом, товарами и финишем\n"
-                    f"- Размер радиуса робота\n"
-                    f"Товаров с доступом: {access_count}",
-                )
+            self._process_routes(samples, "обычной генерации")
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка генерации: {e}")
+
+    def generate_routes_with_limits(self):
+        """НОВЫЙ ФУНКЦИОНАЛ: Генерация маршрутов с учетом ограничений по количеству"""
+        if not self.route_optimizer.has_amount_data():
+            messagebox.showwarning("Предупреждение", "Данные о количестве товаров отсутствуют!")
+            return
+
+        if not self.scale_set:
+            messagebox.showwarning("Предупреждение", "Сначала установите масштаб карты!")
+            return
+
+        if not self.robot_radius_set:
+            if not messagebox.askyesno(
+                "Радиус робота",
+                "Радиус робота не задан. Использовать значение по умолчанию (0.3 м)?",
+            ):
+                return
+            self.map_processor.set_robot_radius_meters(0.3)
+            self.robot_radius_set = True
+            self.update_status()
+
+        if not self.start_point or not self.end_point:
+            messagebox.showwarning("Предупреждение", "Установите точки старта и финиша")
+            return
+
+        # Проверяем товары с доступом и количеством
+        with_amount_and_access = sum(1 for p in self.route_optimizer.products.values() 
+                                   if p.amount > 0 and p.id in self.route_optimizer.access_points)
+        
+        if with_amount_and_access < 5:
+            messagebox.showwarning("Предупреждение", 
+                                 f"Минимум 5 товаров должны иметь доступ и количество > 0. Сейчас: {with_amount_and_access}")
+            return
+
+        num_samples = simpledialog.askinteger("Генерация с ограничениями", 
+                                            "Количество выборок:", initialvalue=73)
+        if not num_samples:
+            return
+
+        try:
+            samples = self.route_optimizer.generate_samples_with_limits(num_samples)
+            
+            # Показываем статистику использования
+            usage_stats = self.route_optimizer.get_usage_statistics(samples)
+            print("Статистика использования товаров:")
+            for product_id, count in usage_stats.items():
+                product = self.route_optimizer.products[product_id]
+                print(f"{product_id}: {count}/{product.amount}")
+
+            self._process_routes(samples, "генерации с ограничениями")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка генерации с ограничениями: {e}")
+
+    def _process_routes(self, samples, generation_type):
+        """Общий метод для обработки сгенерированных выборок"""
+        progress = tk.Toplevel(self.root)
+        progress.title("Генерация маршрутов")
+        progress_label = tk.Label(progress, text="Инициализация...")
+        progress_label.pack(padx=20, pady=10)
+        progress_bar = ttk.Progressbar(progress, length=300, mode="determinate", maximum=len(samples))
+        progress_bar.pack(padx=20, pady=10)
+
+        successful_routes = 0
+        failed_routes = 0
+
+        for i, sample in enumerate(samples):
+            progress_label.config(text=f"Обработка маршрута {i+1}/{len(samples)}")
+            progress.update()
+
+            coords = self.route_optimizer.get_access_coordinates(sample)
+
+            if len(coords) != len(sample):
+                failed_routes += 1
+                progress_bar["value"] = i + 1
+                progress.update()
+                continue
+
+            path, distance, order = self.map_processor.find_optimal_route_simple(
+                self.start_point, coords, self.end_point
+            )
+
+            if path and len(path) > 0:
+                if order:
+                    ordered_sample = [sample[idx] for idx in order]
+                else:
+                    ordered_sample = sample
+
+                self.save_route_image(i + 1, path, ordered_sample, distance)
+                self.route_optimizer.save_route_info(i + 1, ordered_sample, distance, path)
+                successful_routes += 1
+            else:
+                failed_routes += 1
+
+            progress_bar["value"] = i + 1
+            progress.update()
+
+        progress.destroy()
+
+        if successful_routes > 0:
+            messagebox.showinfo(
+                "Успех",
+                f"Сгенерировано маршрутов ({generation_type}): {successful_routes}\n"
+                f"Не удалось построить: {failed_routes}\n"
+                f"Сохранено в: output/routes/",
+            )
+        else:
+            access_count = len(self.route_optimizer.access_points)
+            with_amount = sum(1 for p in self.route_optimizer.products.values() 
+                            if p.amount > 0 and p.id in self.route_optimizer.access_points)
+            messagebox.showwarning(
+                "Внимание",
+                f"Не удалось построить ни одного маршрута.\n"
+                f"Проверьте:\n"
+                f"- Точки доступа к товарам (зеленые точки на карте)\n"
+                f"- Проходимость между стартом, товарами и финишем\n"
+                f"- Размер радиуса робота\n"
+                f"- Количество товаров (столбец Amount)\n"
+                f"Товаров с доступом: {access_count}, с количеством и доступом: {with_amount}",
+            )
 
     def save_route_image(self, route_id: int, path: List[tuple], products: List[str], distance: float):
         if not self.map_image:
@@ -950,6 +1055,8 @@ class WarehouseGUI:
                             tk.END,
                             f"   Доступ: ({product['access_point'][0]}, {product['access_point'][1]})\n",
                         )
+                    if "amount" in product:
+                        info_text.insert(tk.END, f"   Количество: {product['amount']}\n")
 
         def open_image():
             selection = listbox.curselection()

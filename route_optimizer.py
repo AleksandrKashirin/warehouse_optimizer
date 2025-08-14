@@ -12,15 +12,16 @@ class Product:
     name: str
     x: int = -1
     y: int = -1
-    access_x: int = -1  # Добавляем точку доступа
+    access_x: int = -1
     access_y: int = -1
+    amount: int = 0  # Новое поле для количества
 
 
 class RouteOptimizer:
     def __init__(self):
         self.products = {}
         self.placed_products = {}
-        self.access_points = {}  # Добавляем словарь точек доступа
+        self.access_points = {}
 
     def load_products(self, filepath: str):
         """Загрузка товаров из CSV"""
@@ -38,6 +39,7 @@ class RouteOptimizer:
                     y=int(row.get("Y", -1)) if row.get("Y") else -1,
                     access_x=int(row.get("Access_X", -1)) if row.get("Access_X") else -1,
                     access_y=int(row.get("Access_Y", -1)) if row.get("Access_Y") else -1,
+                    amount=int(row.get("Amount", 0)) if row.get("Amount") else 0,
                 )
                 self.products[product.id] = product
                 if product.x >= 0 and product.y >= 0:
@@ -49,13 +51,26 @@ class RouteOptimizer:
         """Сохранение товаров с координатами и точками доступа"""
         with open(filepath, "w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["ID", "Название", "X", "Y", "Access_X", "Access_Y"])
-            for product in self.products.values():
-                writer.writerow([
-                    product.id, product.name, 
-                    product.x, product.y,
-                    product.access_x, product.access_y
-                ])
+            # Проверяем, есть ли товары с amount > 0
+            has_amounts = any(p.amount > 0 for p in self.products.values())
+            
+            if has_amounts:
+                writer.writerow(["ID", "Название", "X", "Y", "Access_X", "Access_Y", "Amount"])
+                for product in self.products.values():
+                    writer.writerow([
+                        product.id, product.name, 
+                        product.x, product.y,
+                        product.access_x, product.access_y, product.amount
+                    ])
+            else:
+                # Старый формат без Amount
+                writer.writerow(["ID", "Название", "X", "Y", "Access_X", "Access_Y"])
+                for product in self.products.values():
+                    writer.writerow([
+                        product.id, product.name, 
+                        product.x, product.y,
+                        product.access_x, product.access_y
+                    ])
 
     def place_product(self, product_id: str, x: int, y: int, access_point: Tuple[int, int] = None):
         """Размещение товара на карте с точкой доступа"""
@@ -80,7 +95,7 @@ class RouteOptimizer:
     def generate_samples(
         self, num_samples: int, sample_size: int = 5
     ) -> List[List[str]]:
-        """Генерация случайных выборок товаров"""
+        """Генерация случайных выборок товаров (оригинальный метод)"""
         # Используем только товары с точками доступа
         placed_ids = [id for id in self.access_points.keys()]
 
@@ -95,6 +110,89 @@ class RouteOptimizer:
             samples.append(sample)
 
         return samples
+
+    def generate_samples_with_limits(
+        self, num_samples: int, sample_size: int = 5
+    ) -> List[List[str]]:
+        """Генерация выборок товаров с учетом ограничений по количеству"""
+        available_ids = [id for id in self.access_points.keys() 
+                        if self.products[id].amount > 0]
+
+        if len(available_ids) < 1:
+            raise ValueError("Нет товаров с доступом и количеством > 0")
+
+        total_capacity = sum(self.products[id].amount for id in available_ids)
+        required_total = num_samples * sample_size
+        
+        if total_capacity < required_total:
+            raise ValueError(
+                f"Недостаточно общего количества товаров. "
+                f"Требуется {required_total}, доступно {total_capacity}"
+            )
+
+        # Пытаемся сгенерировать выборки несколько раз
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            try:
+                return self._generate_samples_attempt(num_samples, sample_size, available_ids)
+            except ValueError:
+                if attempt == max_attempts - 1:
+                    raise ValueError(f"Не удалось сгенерировать выборки за {max_attempts} попыток")
+                continue
+
+    def _generate_samples_attempt(self, num_samples: int, sample_size: int, available_ids: List[str]) -> List[List[str]]:
+        """Одна попытка генерации выборок"""
+        usage_count = {id: 0 for id in available_ids}
+        samples = []
+
+        for sample_idx in range(num_samples):
+            sample = []
+            sample_count = {}
+            
+            for pos in range(sample_size):
+                # Находим кандидатов с весами (приоритет менее использованным товарам)
+                candidates = []
+                weights = []
+                
+                for product_id in available_ids:
+                    if usage_count[product_id] >= self.products[product_id].amount:
+                        continue
+                    if sample_count.get(product_id, 0) >= 3:
+                        continue
+                    
+                    candidates.append(product_id)
+                    # Вес обратно пропорционален использованию
+                    remaining = self.products[product_id].amount - usage_count[product_id]
+                    weight = remaining * 10 + random.random()  # Добавляем случайность
+                    weights.append(weight)
+                
+                if not candidates:
+                    raise ValueError(f"Нет кандидатов для выборки {sample_idx + 1}, позиция {pos + 1}")
+                
+                # Выбираем с учетом весов (приоритет товарам с большим остатком)
+                max_weight = max(weights)
+                best_candidates = [candidates[i] for i, w in enumerate(weights) if w >= max_weight * 0.8]
+                selected_product = random.choice(best_candidates)
+                
+                sample.append(selected_product)
+                usage_count[selected_product] += 1
+                sample_count[selected_product] = sample_count.get(selected_product, 0) + 1
+            
+            samples.append(sample)
+
+        return samples
+
+    def has_amount_data(self) -> bool:
+        """Проверка, есть ли данные о количестве товаров"""
+        return any(p.amount > 0 for p in self.products.values())
+
+    def get_usage_statistics(self, samples: List[List[str]]) -> Dict[str, int]:
+        """Получение статистики использования товаров в выборках"""
+        usage_count = {}
+        for sample in samples:
+            for product_id in sample:
+                usage_count[product_id] = usage_count.get(product_id, 0) + 1
+        return usage_count
 
     def get_access_coordinates(self, product_ids: List[str]) -> List[Tuple[int, int]]:
         """Получение точек доступа для списка товаров"""
@@ -141,6 +239,8 @@ class RouteOptimizer:
                 }
                 if pid in self.access_points:
                     detail["access_point"] = list(self.access_points[pid])
+                if p.amount > 0:
+                    detail["amount"] = p.amount
                 info["product_details"].append(detail)
 
         filepath = f"output/routes/route_{route_id}_info.json"
