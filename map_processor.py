@@ -45,6 +45,15 @@ class MapProcessor:
         self.shelves.append((x1, y1, x2, y2))
         self._rebuild_grid()
     
+    def remove_shelf_at(self, x: int, y: int) -> bool:
+        """Удаление стеллажа в указанной точке"""
+        for i, (x1, y1, x2, y2) in enumerate(self.shelves):
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                del self.shelves[i]
+                self._rebuild_grid()
+                return True
+        return False
+    
     def clear_markup(self):
         """Очистка разметки"""
         self.walls.clear()

@@ -54,6 +54,7 @@ class WarehouseGUI:
 
         tk.Button(control_frame2, text="Рисовать стены", command=self.draw_walls_mode).pack(side=tk.LEFT, padx=2)
         tk.Button(control_frame2, text="Рисовать стеллажи", command=self.draw_shelves_mode).pack(side=tk.LEFT, padx=2)
+        tk.Button(control_frame2, text="Удалить стеллаж", command=self.remove_shelf_mode).pack(side=tk.LEFT, padx=2)
         tk.Button(control_frame2, text="Очистить разметку", command=self.clear_markup).pack(side=tk.LEFT, padx=2)
         tk.Button(control_frame2, text="Сохранить разметку", command=self.save_markup).pack(side=tk.LEFT, padx=2)
         tk.Button(control_frame2, text="Загрузить разметку", command=self.load_markup).pack(side=tk.LEFT, padx=2)
@@ -122,6 +123,11 @@ class WarehouseGUI:
         self.mode = "draw_shelves"
         self.temp_rect_start = None
         self.info_label.config(text="Режим рисования стеллажей. Кликните две точки для создания прямоугольника")
+    
+    def remove_shelf_mode(self):
+        """Режим удаления стеллажей"""
+        self.mode = "remove_shelf"
+        self.info_label.config(text="Режим удаления стеллажей. Кликните на стеллаж (синий прямоугольник) для удаления")
     
     def save_wall_chain(self):
         """Сохранение текущей цепочки стен"""
@@ -438,6 +444,15 @@ class WarehouseGUI:
                 self.canvas.delete("temp_shelf")
                 self.info_label.config(text="Стеллаж добавлен. Кликните для следующего")
 
+        elif self.mode == "remove_shelf":
+            ix, iy = int(x), int(y)
+            
+            if self.map_processor.remove_shelf_at(ix, iy):
+                self.display_map()
+                self.info_label.config(text="Стеллаж удален. Кликните на другой стеллаж для удаления")
+            else:
+                self.info_label.config(text="Стеллаж не найден. Кликните точно на синий прямоугольник")
+
         elif self.mode == "place" and hasattr(self, "selected_product_id"):
             ix, iy = int(x), int(y)
 
@@ -541,6 +556,11 @@ class WarehouseGUI:
                         else "недоступно"
                     )
                     self.info_label.config(text=f"({ix}, {iy}) - {status}, {walkable}")
+            elif self.mode == "remove_shelf":
+                if self.map_processor.is_shelf(ix, iy):
+                    self.info_label.config(text=f"({ix}, {iy}) - стеллаж (кликните для удаления)")
+                else:
+                    self.info_label.config(text=f"({ix}, {iy}) - не стеллаж")
 
     def display_map(self):
         if self.map_processor.original_image is None:
