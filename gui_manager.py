@@ -806,6 +806,7 @@ class WarehouseGUI:
 
                 self.save_route_image(i + 1, path, ordered_sample, distance)
                 self.route_optimizer.save_route_info(i + 1, ordered_sample, distance, path)
+                self.save_route_segments(i + 1, ordered_sample, path)
                 successful_routes += 1
             else:
                 failed_routes += 1
@@ -836,6 +837,99 @@ class WarehouseGUI:
                 f"- Количество товаров (столбец Amount)\n"
                 f"Товаров с доступом: {access_count}, с количеством и доступом: {with_amount}",
             )
+    
+    def save_route_segments(self, route_id: int, products: List[str], path: List[tuple]):
+        """Сохранение детальной информации о сегментах маршрута из существующего пути"""
+        if not products or not path:
+            return
+        
+        Path("output/routes").mkdir(parents=True, exist_ok=True)
+        
+        # Получаем все ключевые точки маршрута
+        waypoints = [self.start_point]
+        for product_id in products:
+            if product_id in self.route_optimizer.access_points:
+                waypoints.append(self.route_optimizer.access_points[product_id])
+        waypoints.append(self.end_point)
+        
+        # Находим индексы ключевых точек в пути ПОСЛЕДОВАТЕЛЬНО
+        waypoint_indices = [0]  # Начинаем со старта (индекс 0)
+        
+        for i in range(1, len(waypoints)):
+            target_waypoint = waypoints[i]
+            start_search_from = waypoint_indices[-1]  # Ищем от последней найденной точки
+            
+            closest_index = start_search_from
+            min_distance = float('inf')
+            
+            # Ищем ближайшую точку начиная с последней найденной
+            for j in range(start_search_from, len(path)):
+                path_point = path[j]
+                distance = ((path_point[0] - target_waypoint[0])**2 + (path_point[1] - target_waypoint[1])**2)**0.5
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_index = j
+                # Если расстояние начинает увеличиваться, значит мы прошли минимум
+                elif distance > min_distance + 5:  # Добавляем небольшой порог
+                    break
+            
+            waypoint_indices.append(closest_index)
+        
+        # Убеждаемся что последняя точка - это конец пути
+        waypoint_indices[-1] = len(path) - 1
+        
+        # Разбиваем путь на сегменты между ключевыми точками
+        segments = []
+        total_distance_pixels = 0
+        
+        for i in range(len(waypoint_indices) - 1):
+            start_idx = waypoint_indices[i]
+            end_idx = waypoint_indices[i + 1]
+            
+            # Извлекаем участок пути между двумя ключевыми точками
+            segment_path = path[start_idx:end_idx + 1]
+            
+            # Вычисляем длину сегмента
+            segment_distance_pixels = 0
+            if len(segment_path) > 1:
+                for j in range(len(segment_path) - 1):
+                    p1 = segment_path[j]
+                    p2 = segment_path[j + 1]
+                    segment_distance_pixels += ((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)**0.5
+            
+            total_distance_pixels += segment_distance_pixels
+            
+            # Переводим в метры
+            segment_distance_meters = segment_distance_pixels * self.map_processor.scale
+            
+            segment_info = {
+                "segment": i + 1,
+                "from": f"{'Старт' if i == 0 else f'Товар{i}'}", 
+                "to": f"{'Финиш' if i == len(waypoint_indices) - 2 else f'Товар{i+1}'}",
+                "distance": round(segment_distance_meters, 2),
+                "path_points": len(segment_path),
+                "start_index": start_idx,
+                "end_index": end_idx
+            }
+            segments.append(segment_info)
+        
+        # Общая дистанция в метрах
+        total_distance_meters = total_distance_pixels * self.map_processor.scale
+        
+        print(f"Маршрут {route_id}: {len(segments)} сегментов, общая длина = {total_distance_meters:.2f}м")
+        
+        path_data = {
+            "route_id": route_id,
+            "total_segments": len(segments),
+            "segments": segments,
+            "total_calculated_distance": round(total_distance_meters, 2),
+            "waypoints": waypoints,
+            "waypoint_indices": waypoint_indices
+        }
+        
+        filepath = f"output/routes/route_{route_id}_path.json"
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(path_data, f, ensure_ascii=False, indent=2)
 
     def save_route_image(self, route_id: int, path: List[tuple], products: List[str], distance: float):
         if not self.map_image:

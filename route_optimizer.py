@@ -555,23 +555,34 @@ class RouteOptimizer:
                 route_id = route['route_id']
                 total_distance = route['distance_meters']
                 
-                # Загружаем полный путь из отдельного файла если есть
+                # Загружаем детальный путь из отдельного файла
                 path_file = f"output/routes/route_{route_id}_path.json"
                 segment_distances = []
                 
                 if Path(path_file).exists():
-                    # Если есть детальный путь, вычисляем по сегментам
-                    with open(path_file, 'r', encoding='utf-8') as pf:
-                        path_data = json.load(pf)
-                        segments = path_data.get('segments', [])
-                        for segment in segments:
-                            segment_distances.append(round(segment.get('distance', 0), 2))
-                else:
-                    # Если нет детального пути, равномерно распределяем общую дистанцию
+                    try:
+                        with open(path_file, 'r', encoding='utf-8') as pf:
+                            path_data = json.load(pf)
+                            segments = path_data.get('segments', [])
+                            
+                            # Извлекаем дистанции из сегментов
+                            for segment in segments:
+                                distance = segment.get('distance', 0)
+                                segment_distances.append(round(distance, 2))
+                            
+                            print(f"Маршрут {route_id}: загружено {len(segment_distances)} сегментов из файла")
+                            
+                    except Exception as e:
+                        print(f"Ошибка чтения файла {path_file}: {e}")
+                        segment_distances = []
+                
+                # Если не удалось загрузить детальные данные, распределяем равномерно
+                if not segment_distances:
                     num_products = len(route['products'])
                     segments_count = num_products + 1  # старт→товар1, товар1→товар2, ..., товарN→финиш
                     avg_distance = total_distance / segments_count if segments_count > 0 else 0
                     segment_distances = [round(avg_distance, 2)] * segments_count
+                    print(f"Маршрут {route_id}: используется равномерное распределение ({segments_count} сегментов)")
                 
                 # Дополняем до 6 сегментов если меньше
                 while len(segment_distances) < 6:
