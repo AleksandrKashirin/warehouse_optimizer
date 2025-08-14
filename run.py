@@ -37,16 +37,8 @@ def setup_directories():
 
 def generate_test_data():
     """Генерация тестовых данных если нет"""
-    map_file = Path("data/warehouse_map.bmp")
     products_file = Path("data/products.csv")
     photos_dir = Path("data/photos")
-
-    if not map_file.exists():
-        print("Генерация тестовой карты...")
-        from generate_test_map import generate_warehouse_map
-
-        generate_warehouse_map()
-        print("✓ Тестовая карта создана")
 
     if not products_file.exists():
         # Создаем базовый файл товаров
@@ -75,7 +67,6 @@ def generate_test_data():
         print("Генерация тестовых фото товаров...")
         try:
             from generate_test_photos import generate_product_photos
-
             generate_product_photos()
             print("✓ Тестовые фото созданы")
         except:
@@ -95,8 +86,14 @@ def main():
     generate_test_data()
 
     print("\n4. Запуск системы...")
+    print("НОВЫЙ ФУНКЦИОНАЛ:")
+    print("- Поддержка PNG/JPG изображений карт")
+    print("- Интерактивная разметка стен (клик за кликом, ESC для сохранения)")
+    print("- Интерактивная разметка стеллажей (по диагонали)")
+    print("- Сохранение/загрузка разметки")
+    print()
+    
     from main import main as run_app
-
     run_app()
 
 
