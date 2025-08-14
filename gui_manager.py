@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 from map_processor import MapProcessor
 from route_optimizer import RouteOptimizer
+from map_editor import MapEditor
 
 
 class WarehouseGUI:
@@ -35,7 +36,8 @@ class WarehouseGUI:
         control_frame1 = tk.Frame(self.root)
         control_frame1.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
         
-
+        tk.Button(control_frame1, text="Создать/Редактировать карту", 
+                 command=self.open_map_editor, bg="blue", fg="white").pack(side=tk.LEFT, padx=2)
         tk.Button(control_frame1, text="Загрузить карту", command=self.load_map).pack(
             side=tk.LEFT, padx=2
         )
@@ -93,7 +95,7 @@ class WarehouseGUI:
         info_frame.pack(side=tk.TOP, fill=tk.X, padx=5)
 
         self.info_label = tk.Label(
-            info_frame, text="Загрузите карту склада", anchor=tk.W
+            info_frame, text="Загрузите карту склада или создайте новую", anchor=tk.W
         )
         self.info_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
@@ -125,6 +127,43 @@ class WarehouseGUI:
         self.canvas.bind("<Motion>", self.on_mouse_move)
 
         self.update_status()
+    
+    def open_map_editor(self):
+        """Открытие редактора карты"""
+        # Выбор: создать новую или редактировать существующую
+        choice = messagebox.askyesnocancel(
+            "Редактор карты",
+            "Создать новую карту?\n\nДа - новая карта\nНет - редактировать существующую\nОтмена - закрыть"
+        )
+        
+        if choice is None:
+            return
+            
+        editor = MapEditor(self.root)
+        
+        if choice:  # Новая карта
+            width = simpledialog.askinteger("Новая карта", "Ширина (пиксели):", 
+                                           initialvalue=800, minvalue=100, maxvalue=2000)
+            height = simpledialog.askinteger("Новая карта", "Высота (пиксели):", 
+                                           initialvalue=600, minvalue=100, maxvalue=2000)
+            if width and height:
+                new_image = Image.new('RGB', (width, height), (255, 255, 255))
+                editor.edit_image = new_image
+                editor.display_image()
+                editor.info_label.config(text=f"Новая карта: {width}x{height}")
+        else:  # Загрузить существующую
+            filepath = filedialog.askopenfilename(
+                title="Выберите изображение карты",
+                filetypes=[
+                    ("Изображения", "*.jpg *.jpeg *.png *.bmp"),
+                    ("JPEG", "*.jpg *.jpeg"),
+                    ("PNG", "*.png"),
+                    ("BMP", "*.bmp"),
+                    ("Все файлы", "*.*")
+                ]
+            )
+            if filepath:
+                editor.load_image(filepath)
     
     def export_csv(self):
         """Экспорт всех маршрутов в CSV"""
@@ -258,31 +297,6 @@ class WarehouseGUI:
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось сохранить: {e}")
 
-    def set_robot_radius(self):
-        """Установка радиуса робота в метрах"""
-        current = self.map_processor.robot_radius_meters
-        radius = simpledialog.askfloat(
-            "Радиус робота",
-            f"Введите радиус робота в МЕТРАХ\n(текущий: {current:.2f} м):",
-            initialvalue=current,
-            minvalue=0.1,
-            maxvalue=2.0,
-        )
-        if radius:
-            self.map_processor.set_robot_radius_meters(radius)
-            self.robot_radius_set = True
-            self.update_status()
-            self.info_label.config(
-                text=f"Радиус робота: {radius:.2f} м ({self.map_processor.robot_radius_pixels} пикселей)"
-            )
-            self.display_map()
-
-    def set_scale_mode(self):
-        self.mode = "scale"
-        self.scale_points = []
-        self.canvas.delete("scale")
-        self.info_label.config(text="Кликните на две точки с известным расстоянием")
-
     def place_products_mode(self):
         if self.map_processor.grid is None:
             messagebox.showwarning("Предупреждение", "Сначала загрузите карту склада")
@@ -350,17 +364,6 @@ class WarehouseGUI:
         )
         tk.Button(button_frame, text="Завершить", command=on_cancel).pack(
             side=tk.LEFT, padx=5
-        )
-
-    def set_route_points_mode(self):
-        self.mode = "route_points"
-        # Очищаем предыдущие точки
-        self.start_point = None
-        self.end_point = None
-        self.canvas.delete("route_point")
-        self.display_map()
-        self.info_label.config(
-            text="Кликните в ПРОХОДЕ (белая область) для установки точки СТАРТА"
         )
 
     def on_canvas_click(self, event):
@@ -493,96 +496,6 @@ class WarehouseGUI:
                         # Автосохранение
                         if hasattr(self, 'current_map_path'):
                             self.save_session_metadata()
-                    else:
-                        messagebox.showwarning(
-                            "Внимание",
-                            "Точка финиша должна быть в проходе (белая область)!",
-                        )
-
-        elif self.mode == "place" and hasattr(self, "selected_product_id"):
-            ix, iy = int(x), int(y)
-
-            # Если клик на стеллаже - размещаем товар там
-            if self.map_processor.is_shelf(ix, iy):
-                # Ищем точку доступа с увеличенным радиусом
-                access = self.map_processor.find_nearest_walkable(ix, iy, max_radius=50)
-                if access:
-                    self.route_optimizer.place_product(self.selected_product_id, ix, iy, access)
-                    self.display_map()
-                    self.info_label.config(text=f"Товар размещен на стеллаже с точкой доступа")
-                    self.show_product_selector()
-                else:
-                    messagebox.showwarning("Внимание", "К этому месту нет доступа!")
-            # Если клик в проходе рядом со стеллажом - ищем ближайший стеллаж
-            else:
-                # Ищем ближайший стеллаж в радиусе 50 пикселей
-                found = False
-                for r in range(1, 50):
-                    for dx in range(-r, r + 1):
-                        for dy in range(-r, r + 1):
-                            sx, sy = ix + dx, iy + dy
-                            if self.map_processor.is_shelf(sx, sy):
-                                # Ищем точку доступа с увеличенным радиусом
-                                access = self.map_processor.find_nearest_walkable(sx, sy, max_radius=50)
-                                if access:
-                                    self.route_optimizer.place_product(self.selected_product_id, sx, sy, access)
-                                    self.display_map()
-                                    self.info_label.config(text=f"Товар размещен на ближайшем стеллаже с точкой доступа")
-                                    self.show_product_selector()
-                                    found = True
-                                    break
-                        if found:
-                            break
-                    if found:
-                        break
-
-                if not found:
-                    messagebox.showwarning("Внимание", "Кликните ближе к стеллажу (черная область)")
-
-        elif self.mode == "route_points":
-            ix, iy = int(x), int(y)
-
-            if not self.start_point:
-                # Более гибкая проверка для точки старта
-                if self.map_processor.is_walkable(ix, iy, check_radius=False):
-                    self.start_point = (ix, iy)
-                    self.display_map()
-                    self.info_label.config(
-                        text="Кликните в ПРОХОДЕ для установки точки ФИНИША"
-                    )
-                else:
-                    # Попробуем найти ближайшую проходимую точку
-                    nearest = self.map_processor.find_nearest_walkable(ix, iy, max_radius=10)
-                    if nearest:
-                        self.start_point = nearest
-                        self.display_map()
-                        self.info_label.config(
-                            text="Кликните в ПРОХОДЕ для установки точки ФИНИША"
-                        )
-                    else:
-                        messagebox.showwarning(
-                            "Внимание",
-                            "Точка старта должна быть в проходе (белая область)!",
-                        )
-
-            elif not self.end_point:
-                if self.map_processor.is_walkable(ix, iy, check_radius=False):
-                    self.end_point = (ix, iy)
-                    self.display_map()
-                    self.info_label.config(
-                        text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
-                    )
-                    self.mode = "view"
-                else:
-                    # Попробуем найти ближайшую проходимую точку
-                    nearest = self.map_processor.find_nearest_walkable(ix, iy, max_radius=10)
-                    if nearest:
-                        self.end_point = nearest
-                        self.display_map()
-                        self.info_label.config(
-                            text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
-                        )
-                        self.mode = "view"
                     else:
                         messagebox.showwarning(
                             "Внимание",
