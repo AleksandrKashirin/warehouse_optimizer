@@ -1248,6 +1248,7 @@ class WarehouseGUI:
         tk.Button(button_frame, text="Сохранить план", command=save_optimized).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Сохранить отчет", command=save_report).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Экспорт CSV", command=self.export_csv).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Дистанции CSV", command=self.export_distances_csv).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Закрыть", command=result_window.destroy).pack(side=tk.RIGHT, padx=5)
     
     def auto_load_last_config(self):
@@ -1313,6 +1314,16 @@ class WarehouseGUI:
         Path("data").mkdir(exist_ok=True)
         with open("data/last_config.json", 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
+
+    def export_distances_csv(self):
+        """Экспорт дистанций между точками маршрутов в CSV"""
+        try:
+            count = self.route_optimizer.export_distances_to_csv()
+            messagebox.showinfo("Успех", f"Экспортировано {count} маршрутов с дистанциями в output/routes/distances_summary.csv")
+        except ValueError as e:
+            messagebox.showwarning("Внимание", str(e))
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка экспорта дистанций: {e}")
 
 if __name__ == "__main__":
     root = tk.Tk()

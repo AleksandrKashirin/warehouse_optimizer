@@ -519,3 +519,68 @@ class RouteOptimizer:
         stats['efficiency_score'] = 1 - (total_changes / total_possible_changes) if total_possible_changes > 0 else 1
         
         return stats
+    
+    def export_distances_to_csv(self, filepath: str = "output/routes/distances_summary.csv"):
+        """Экспорт дистанций между точками маршрутов в CSV"""
+        import glob
+        import json
+        
+        route_files = glob.glob("output/routes/route_*_info.json")
+        if not route_files:
+            raise ValueError("Нет сохраненных маршрутов для экспорта")
+        
+        routes_data = []
+        for file in sorted(route_files, key=lambda x: int(x.split('_')[1])):
+            with open(file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                routes_data.append(data)
+        
+        # Заголовки для дистанций между точками
+        headers = [
+            "№ Выборки",
+            "Старт→Товар1", 
+            "Товар1→Товар2",
+            "Товар2→Товар3", 
+            "Товар3→Товар4",
+            "Товар4→Товар5",
+            "Товар5→Финиш",
+            "Общая дистанция"
+        ]
+        
+        with open(filepath, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            
+            for route in routes_data:
+                route_id = route['route_id']
+                total_distance = route['distance_meters']
+                
+                # Загружаем полный путь из отдельного файла если есть
+                path_file = f"output/routes/route_{route_id}_path.json"
+                segment_distances = []
+                
+                if Path(path_file).exists():
+                    # Если есть детальный путь, вычисляем по сегментам
+                    with open(path_file, 'r', encoding='utf-8') as pf:
+                        path_data = json.load(pf)
+                        segments = path_data.get('segments', [])
+                        for segment in segments:
+                            segment_distances.append(round(segment.get('distance', 0), 2))
+                else:
+                    # Если нет детального пути, равномерно распределяем общую дистанцию
+                    num_products = len(route['products'])
+                    segments_count = num_products + 1  # старт→товар1, товар1→товар2, ..., товарN→финиш
+                    avg_distance = total_distance / segments_count if segments_count > 0 else 0
+                    segment_distances = [round(avg_distance, 2)] * segments_count
+                
+                # Дополняем до 6 сегментов если меньше
+                while len(segment_distances) < 6:
+                    segment_distances.append(0)
+                
+                # Обрезаем если больше 6
+                segment_distances = segment_distances[:6]
+                
+                row = [route_id] + segment_distances + [round(total_distance, 2)]
+                writer.writerow(row)
+        
+        return len(routes_data)
