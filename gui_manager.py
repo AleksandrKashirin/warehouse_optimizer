@@ -37,6 +37,8 @@ class WarehouseGUI:
 
         self.setup_ui()
 
+        self.optimized_samples = None
+
     def setup_ui(self):
         # Панель управления - первая строка
         control_frame1 = tk.Frame(self.root)
@@ -714,11 +716,11 @@ class WarehouseGUI:
 
         # Проверяем товары с доступом и количеством
         with_amount_and_access = sum(1 for p in self.route_optimizer.products.values() 
-                                   if p.amount > 0 and p.id in self.route_optimizer.access_points)
+                                if p.amount > 0 and p.id in self.route_optimizer.access_points)
         
         if with_amount_and_access < 5:
             messagebox.showwarning("Предупреждение", 
-                                 f"Минимум 5 товаров должны иметь доступ и количество > 0. Сейчас: {with_amount_and_access}")
+                                f"Минимум 5 товаров должны иметь доступ и количество > 0. Сейчас: {with_amount_and_access}")
             return
 
         num_samples = simpledialog.askinteger("Генерация с ограничениями", 
@@ -727,16 +729,34 @@ class WarehouseGUI:
             return
 
         try:
+            # 1. Генерируем выборки с ограничениями
             samples = self.route_optimizer.generate_samples_with_limits(num_samples)
             
-            # Показываем статистику использования
-            usage_stats = self.route_optimizer.get_usage_statistics(samples)
+            # 2. Оптимизируем порядок выборок
+            optimized_samples = self.route_optimizer.optimize_samples_order(samples)
+            
+            # 3. Анализируем группировку по ночам
+            night_groups = self.route_optimizer.group_samples_by_nights(optimized_samples)
+            stats = self.route_optimizer.analyze_night_efficiency(night_groups)
+            
+            # 4. Показываем статистику оптимизации
+            usage_stats = self.route_optimizer.get_usage_statistics(optimized_samples)
             print("Статистика использования товаров:")
             for product_id, count in usage_stats.items():
                 product = self.route_optimizer.products[product_id]
                 print(f"{product_id}: {count}/{product.amount}")
+            
+            print(f"\nОптимизация по ночам:")
+            print(f"Эффективность: {stats['efficiency_score']:.1%}")
+            for night_info in stats['nights']:
+                print(f"Ночь {night_info['night']}: {night_info['unique_products']} товаров, "
+                    f"{night_info['avg_transitions_per_experiment']:.1f} смен за эксперимент")
 
-            self._process_routes(samples, "генерации с ограничениями")
+            # 5. Генерируем маршруты в оптимизированном порядке
+            self._process_routes(optimized_samples, "генерации с ограничениями и оптимизацией")
+            
+            # 6. Показываем результаты оптимизации
+            self.show_optimization_results(night_groups, stats)
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка генерации с ограничениями: {e}")
@@ -753,7 +773,9 @@ class WarehouseGUI:
         successful_routes = 0
         failed_routes = 0
 
-        for i, sample in enumerate(samples):
+        samples_to_process = self.optimized_samples if self.optimized_samples else samples
+
+        for i, sample in enumerate(samples_to_process):
             progress_label.config(text=f"Обработка маршрута {i+1}/{len(samples)}")
             progress.update()
 
@@ -900,7 +922,11 @@ class WarehouseGUI:
 
         # Информация о выборке
         y_pos = 10
-        draw.text((10, y_pos), f"ВЫБОРКА #{route_id}", fill="black", font=font_title)
+        # Вычисляем номер ночной сессии (1-5)
+        night_session = ((route_id - 1) // 15) + 1
+        draw.text((10, y_pos), f"Ночная сессия испытаний №{night_session}", fill="darkblue", font=font_normal)
+        y_pos += 18
+        draw.text((10, y_pos), f"Испытание #{route_id}", fill="black", font=font_title)
         y_pos += 25
         draw.text((10, y_pos), f"Расстояние: {distance:.2f} м", fill="black", font=font_normal)
         y_pos += 18
@@ -1077,6 +1103,116 @@ class WarehouseGUI:
         tk.Button(list_frame, text="Открыть изображение", command=open_image).pack(pady=5)
         tk.Button(viewer, text="Закрыть", command=viewer.destroy).pack(side=tk.BOTTOM, pady=10)
 
+    def optimize_samples_order(self):
+        """Оптимизация порядка выборок для минимизации перестановок товаров"""
+        import glob
+        import json
+        
+        # Загружаем существующие маршруты
+        route_files = glob.glob("output/routes/route_*_info.json")
+        if not route_files:
+            messagebox.showwarning("Внимание", "Нет сгенерированных маршрутов для оптимизации")
+            return
+        
+        # Извлекаем выборки из файлов
+        routes_data = []
+        for file in sorted(route_files, key=lambda x: int(x.split('_')[1])):
+            with open(file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                routes_data.append(data['products'])
+        
+        # Оптимизируем порядок
+        optimized_samples = self.route_optimizer.optimize_samples_order(routes_data)
+        
+        # Группируем по ночам
+        night_groups = self.route_optimizer.group_samples_by_nights(optimized_samples)
+        
+        # Анализируем эффективность
+        stats = self.route_optimizer.analyze_night_efficiency(night_groups)
+        
+        # Сохраняем оптимизированные выборки
+        self.optimized_samples = optimized_samples  
+
+        # Показываем результаты
+        self.show_optimization_results(night_groups, stats)
+
+    def show_optimization_results(self, night_groups, stats):
+        """Показ результатов оптимизации"""
+        result_window = tk.Toplevel(self.root)
+        result_window.title("Результаты оптимизации порядка выборок")
+        result_window.geometry("800x600")
+        
+        # Общая статистика
+        stats_frame = tk.Frame(result_window)
+        stats_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Label(stats_frame, text="ОБЩАЯ СТАТИСТИКА", font=("Arial", 14, "bold")).pack()
+        tk.Label(stats_frame, text=f"Всего уникальных товаров: {stats['total_unique_products']}").pack()
+        tk.Label(stats_frame, text=f"Среднее количество товаров за ночь: {stats['avg_products_per_night']:.1f}").pack()
+        tk.Label(stats_frame, text=f"Эффективность оптимизации: {stats['efficiency_score']:.1%}").pack()
+        
+        # Текстовое поле с результатами
+        text_frame = tk.Frame(result_window)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        text_widget = tk.Text(text_frame, wrap=tk.WORD)
+        scrollbar = tk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.config(yscrollcommand=scrollbar.set)
+        
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Заполняем результаты
+        result_text = ""
+        for night_info in stats['nights']:
+            result_text += f"\n=== НОЧЬ {night_info['night']} ===\n"
+            result_text += f"Экспериментов: {night_info['experiments']}\n"
+            result_text += f"Уникальных товаров: {night_info['unique_products']}\n"
+            result_text += f"Общее количество смен товаров: {night_info['total_transitions']}\n"
+            result_text += f"Среднее количество смен за эксперимент: {night_info['avg_transitions_per_experiment']:.1f}\n"
+            result_text += f"Товары: {', '.join(night_info['products'])}\n"
+            result_text += "\n"
+        
+        text_widget.insert(tk.END, result_text)
+        text_widget.config(state=tk.DISABLED)
+        
+        # Кнопки
+        button_frame = tk.Frame(result_window)
+        button_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        def save_optimized():
+            # Сохраняем оптимизированный порядок
+            filepath = filedialog.asksaveasfilename(
+                title="Сохранить план экспериментов",
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+            )
+            if filepath:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write("ПЛАН ПРОВЕДЕНИЯ ЭКСПЕРИМЕНТОВ\n")
+                    f.write("=" * 50 + "\n\n")
+                    
+                    for night_idx, night_samples in enumerate(night_groups):
+                        f.write(f"НОЧЬ {night_idx + 1} ({len(night_samples)} экспериментов)\n")
+                        f.write("-" * 30 + "\n")
+                        
+                        for exp_idx, sample in enumerate(night_samples):
+                            f.write(f"Эксперимент {exp_idx + 1}: {', '.join(sample)}\n")
+                        
+                        # Список уникальных товаров для ночи
+                        night_products = set()
+                        for sample in night_samples:
+                            night_products.update(sample)
+                        f.write(f"\nТовары для подготовки ({len(night_products)} шт.): {', '.join(sorted(night_products))}\n\n")
+                    
+                    f.write(f"\nОБЩАЯ СТАТИСТИКА:\n")
+                    f.write(f"Всего уникальных товаров: {stats['total_unique_products']}\n")
+                    f.write(f"Эффективность: {stats['efficiency_score']:.1%}\n")
+                
+                messagebox.showinfo("Успех", f"План сохранен в {filepath}")
+        
+        tk.Button(button_frame, text="Сохранить план", command=save_optimized).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Закрыть", command=result_window.destroy).pack(side=tk.RIGHT, padx=5)
 
 if __name__ == "__main__":
     root = tk.Tk()

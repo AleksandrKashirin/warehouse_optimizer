@@ -288,3 +288,96 @@ class RouteOptimizer:
                 writer.writerow(row)
         
         return len(routes_data)
+    
+    def optimize_samples_order(self, samples: List[List[str]], group_size: int = 15) -> List[List[str]]:
+        """Оптимизация порядка выборок для минимизации различий между соседними"""
+        if not samples:
+            return samples
+        
+        optimized = []
+        remaining = samples.copy()
+        
+        # Начинаем с первой выборки
+        current = remaining.pop(0)
+        optimized.append(current)
+        
+        while remaining:
+            best_next = None
+            best_overlap = -1
+            best_index = -1
+            
+            # Ищем выборку с максимальным пересечением с текущей
+            for i, candidate in enumerate(remaining):
+                overlap = len(set(current) & set(candidate))
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_next = candidate
+                    best_index = i
+            
+            # Добавляем лучшую найденную выборку
+            if best_next is not None:
+                current = remaining.pop(best_index)
+                optimized.append(current)
+            else:
+                # Если не нашли пересечений, берем любую
+                current = remaining.pop(0)
+                optimized.append(current)
+        
+        return optimized
+
+    def group_samples_by_nights(self, samples: List[List[str]], group_size: int = 15) -> List[List[List[str]]]:
+        """Разбивка выборок на группы (ночи)"""
+        groups = []
+        for i in range(0, len(samples), group_size):
+            group = samples[i:i + group_size]
+            groups.append(group)
+        return groups
+
+    def analyze_night_efficiency(self, groups: List[List[List[str]]]) -> Dict:
+        """Анализ эффективности группировки по ночам"""
+        stats = {
+            'nights': [],
+            'total_unique_products': 0,
+            'avg_products_per_night': 0,
+            'efficiency_score': 0
+        }
+        
+        all_products = set()
+        night_products_counts = []
+        
+        for night_idx, night_samples in enumerate(groups):
+            night_products = set()
+            transitions = 0  # Количество смен товаров между соседними выборками
+            
+            for sample in night_samples:
+                night_products.update(sample)
+            
+            # Считаем переходы между соседними выборками
+            for i in range(len(night_samples) - 1):
+                current_set = set(night_samples[i])
+                next_set = set(night_samples[i + 1])
+                changes = len(current_set.symmetric_difference(next_set))
+                transitions += changes
+            
+            night_info = {
+                'night': night_idx + 1,
+                'experiments': len(night_samples),
+                'unique_products': len(night_products),
+                'total_transitions': transitions,
+                'avg_transitions_per_experiment': transitions / len(night_samples) if night_samples else 0,
+                'products': sorted(list(night_products))
+            }
+            
+            stats['nights'].append(night_info)
+            all_products.update(night_products)
+            night_products_counts.append(len(night_products))
+        
+        stats['total_unique_products'] = len(all_products)
+        stats['avg_products_per_night'] = sum(night_products_counts) / len(night_products_counts) if night_products_counts else 0
+        
+        # Чем меньше переходов, тем лучше эффективность
+        total_transitions = sum(night['total_transitions'] for night in stats['nights'])
+        max_possible_transitions = len(groups) * 15 * 5  # Максимум если все товары разные
+        stats['efficiency_score'] = 1 - (total_transitions / max_possible_transitions) if max_possible_transitions > 0 else 1
+        
+        return stats
