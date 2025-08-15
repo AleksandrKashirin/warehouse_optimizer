@@ -141,23 +141,24 @@ class RouteOptimizer:
                 continue
 
     def _generate_samples_attempt(self, num_samples: int, sample_size: int, available_ids: List[str]) -> List[List[str]]:
-        """Одна попытка генерации выборок"""
+        """Одна попытка генерации выборок с уникальными товарами"""
         usage_count = {id: 0 for id in available_ids}
         samples = []
 
         for sample_idx in range(num_samples):
             sample = []
-            sample_count = {}
             
             for pos in range(sample_size):
-                # Находим кандидатов с весами (приоритет менее использованным товарам)
+                # Находим кандидатов с весами (исключаем уже использованные в текущей выборке)
                 candidates = []
                 weights = []
                 
                 for product_id in available_ids:
+                    # Проверяем общий лимит товара
                     if usage_count[product_id] >= self.products[product_id].amount:
                         continue
-                    if sample_count.get(product_id, 0) >= 3:
+                    # Проверяем уникальность в текущей выборке
+                    if product_id in sample:
                         continue
                     
                     candidates.append(product_id)
@@ -176,7 +177,6 @@ class RouteOptimizer:
                 
                 sample.append(selected_product)
                 usage_count[selected_product] += 1
-                sample_count[selected_product] = sample_count.get(selected_product, 0) + 1
             
             samples.append(sample)
 
