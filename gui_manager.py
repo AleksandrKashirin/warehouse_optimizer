@@ -41,6 +41,11 @@ class WarehouseGUI:
 
         self.auto_load_last_config()
 
+        # Для масштабирования карты
+        self.zoom_factor = 1.0
+        self.min_zoom = 0.1
+        self.max_zoom = 5.0
+
     def setup_ui(self):
         # Панель управления - первая строка
         control_frame1 = tk.Frame(self.root)
@@ -105,6 +110,10 @@ class WarehouseGUI:
         self.canvas.config(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<Motion>", self.on_mouse_move)
+        # Привязка событий колеса мыши
+        self.canvas.bind("<MouseWheel>", self.on_mousewheel)  # Windows
+        self.canvas.bind("<Button-4>", self.on_mousewheel)    # Linux scroll up
+        self.canvas.bind("<Button-5>", self.on_mousewheel)    # Linux scroll down
         
         # Привязка клавиш
         self.root.bind("<KeyPress>", self.on_key_press)
@@ -120,6 +129,43 @@ class WarehouseGUI:
                 self.save_wall_chain()
                 self.info_label.config(text="Цепочка стен сохранена. Нажмите для начала новой цепочки")
     
+    def on_mousewheel(self, event):
+        """Обработка колеса мыши для навигации и масштабирования"""
+        # Определяем направление прокрутки
+        if event.num == 4 or event.delta > 0:
+            delta = 1  # вверх
+        elif event.num == 5 or event.delta < 0:
+            delta = -1  # вниз
+        else:
+            return
+
+        # Ctrl + колесо = масштабирование
+        if event.state & 0x4:  # Ctrl pressed
+            old_zoom = self.zoom_factor
+            if delta > 0:
+                self.zoom_factor = min(self.max_zoom, self.zoom_factor * 1.2)
+            else:
+                self.zoom_factor = max(self.min_zoom, self.zoom_factor / 1.2)
+            
+            if self.zoom_factor != old_zoom:
+                # Получаем позицию курсора на канвасе
+                canvas_x = self.canvas.canvasx(event.x)
+                canvas_y = self.canvas.canvasy(event.y)
+                
+                self.display_map()
+                
+                # Центрируем вид на точке курсора
+                self.canvas.scan_mark(int(event.x), int(event.y))
+                self.canvas.scan_dragto(int(event.x), int(event.y), gain=1)
+        
+        # Shift + колесо = горизонтальная прокрутка
+        elif event.state & 0x1:  # Shift pressed
+            self.canvas.xview_scroll(-delta * 3, "units")
+        
+        # Обычная прокрутка по вертикали
+        else:
+            self.canvas.yview_scroll(-delta * 3, "units")
+
     def draw_walls_mode(self):
         """Режим рисования стен"""
         self.mode = "draw_walls"
@@ -668,6 +714,13 @@ class WarehouseGUI:
             draw.text((x + 7, y - 5), "FINISH", fill="red")
 
         self.map_image = img
+
+        # Применяем масштабирование если нужно
+        if self.zoom_factor != 1.0:
+            new_width = int(img.width * self.zoom_factor)
+            new_height = int(img.height * self.zoom_factor)
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
         self.photo_image = ImageTk.PhotoImage(img)
 
         self.canvas.delete("all")
