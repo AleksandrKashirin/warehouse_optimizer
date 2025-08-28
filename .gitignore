@@ -15,6 +15,7 @@ venv/
 *.swo
 
 # Project specific
+data/
 data/*.bmp
 data/*.json
 data/*.txt

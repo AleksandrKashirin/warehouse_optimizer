@@ -506,24 +506,37 @@ class WarehouseGUI:
 
         elif self.mode == "place" and hasattr(self, "selected_product_id"):
             ix, iy = int(x), int(y)
+            
+            # Рассчитываем адекватный радиус поиска (минимум в 3 раза больше радиуса робота)
+            search_radius = max(50, self.map_processor.robot_radius_pixels * 3)
 
             if self.map_processor.is_shelf(ix, iy):
-                access = self.map_processor.find_nearest_walkable(ix, iy, max_radius=50)
+                access = self.map_processor.find_nearest_walkable(ix, iy, max_radius=search_radius)
                 if access:
                     self.route_optimizer.place_product(self.selected_product_id, ix, iy, access)
                     self.display_map()
                     self.info_label.config(text=f"Товар размещен на стеллаже с точкой доступа")
                     self.show_product_selector()
                 else:
-                    messagebox.showwarning("Внимание", "К этому месту нет доступа!")
+                    scale_info = f"масштаб: 1px = {self.map_processor.scale:.3f}м"
+                    search_radius_m = search_radius * self.map_processor.scale
+                    robot_radius_info = f"радиус робота: {self.map_processor.robot_radius_pixels}px = {self.map_processor.robot_radius_meters:.2f}м"
+                    
+                    error_msg = (f"К этому месту нет доступа!\n\n"
+                                f"Позиция: ({ix}, {iy})\n"
+                                f"Поиск в радиусе: {search_radius}px = {search_radius_m:.2f}м\n"
+                                f"{scale_info}\n"
+                                f"{robot_radius_info}")
+                    
+                    messagebox.showwarning("Диагностика доступа", error_msg)
             else:
                 found = False
-                for r in range(1, 50):
+                for r in range(1, search_radius):
                     for dx in range(-r, r + 1):
                         for dy in range(-r, r + 1):
                             sx, sy = ix + dx, iy + dy
                             if self.map_processor.is_shelf(sx, sy):
-                                access = self.map_processor.find_nearest_walkable(sx, sy, max_radius=50)
+                                access = self.map_processor.find_nearest_walkable(sx, sy, max_radius=search_radius)
                                 if access:
                                     self.route_optimizer.place_product(self.selected_product_id, sx, sy, access)
                                     self.display_map()
