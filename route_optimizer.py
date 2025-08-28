@@ -210,16 +210,9 @@ class RouteOptimizer:
                 coords.append(self.placed_products[pid])
         return coords
 
-    def save_route_info(
-        self,
-        route_id: int,
-        products: List[str],
-        distance: float,
-        path: List[Tuple[int, int]],
-    ):
+    def save_route_info(self, route_id: int, products: List[str], distance: float, path: List[Tuple[int, int]], routes_dir: str):
         """Сохранение информации о маршруте"""
-        # Убедимся, что директория существует
-        Path("output/routes").mkdir(parents=True, exist_ok=True)
+        Path(routes_dir).mkdir(parents=True, exist_ok=True)
 
         info = {
             "route_id": route_id,
@@ -243,29 +236,27 @@ class RouteOptimizer:
                     detail["amount"] = p.amount
                 info["product_details"].append(detail)
 
-        filepath = f"output/routes/route_{route_id}_info.json"
+        filepath = Path(routes_dir) / f"route_{route_id}_info.json"
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(info, f, ensure_ascii=False, indent=2)
-        print(f"Информация о маршруте сохранена: {filepath}")
 
-    def export_routes_to_csv(self, filepath: str = "output/routes/routes_summary.csv"):
+    def export_routes_to_csv(self, filepath: str, routes_dir: str):
         """Экспорт всех маршрутов в упрощенный CSV"""
         import glob
         import json
         
-        route_files = glob.glob("output/routes/route_*_info.json")
+        route_files = glob.glob(str(Path(routes_dir) / "route_*_info.json"))
         if not route_files:
             raise ValueError("Нет сохраненных маршрутов для экспорта")
         
         routes_data = []
-        for file in sorted(route_files, key=lambda x: int(x.split('_')[1])):
+        for file in sorted(route_files, key=lambda x: int(Path(x).stem.split('_')[1])):
             with open(file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 routes_data.append(data)
         
         max_products = max(len(route['products']) for route in routes_data)
         
-        # Упрощенные заголовки - только ID товаров
         headers = ["№ Выборки"]
         for i in range(1, max_products + 1):
             headers.append(f"Товар {i}")
@@ -277,13 +268,78 @@ class RouteOptimizer:
             for route in routes_data:
                 row = [route['route_id']]
                 
-                # Только ID товаров
                 for i in range(max_products):
                     if i < len(route['products']):
                         row.append(route['products'][i])
                     else:
                         row.append("")
                 
+                writer.writerow(row)
+        
+        return len(routes_data)
+
+    def export_distances_to_csv(self, filepath: str, routes_dir: str):
+        """Экспорт дистанций между точками маршрутов в CSV"""
+        import glob
+        import json
+        
+        route_files = glob.glob(str(Path(routes_dir) / "route_*_info.json"))
+        if not route_files:
+            raise ValueError("Нет сохраненных маршрутов для экспорта")
+        
+        routes_data = []
+        for file in sorted(route_files, key=lambda x: int(Path(file).stem.split('_')[1])):
+            with open(file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                routes_data.append(data)
+        
+        headers = [
+            "№ Выборки",
+            "Старт→Товар1", 
+            "Товар1→Товар2",
+            "Товар2→Товар3", 
+            "Товар3→Товар4",
+            "Товар4→Товар5",
+            "Товар5→Финиш",
+            "Общая дистанция"
+        ]
+        
+        with open(filepath, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            
+            for route in routes_data:
+                route_id = route['route_id']
+                total_distance = route['distance_meters']
+                
+                path_file = Path(routes_dir) / f"route_{route_id}_path.json"
+                segment_distances = []
+                
+                if path_file.exists():
+                    try:
+                        with open(path_file, 'r', encoding='utf-8') as pf:
+                            path_data = json.load(pf)
+                            segments = path_data.get('segments', [])
+                            
+                            for segment in segments:
+                                distance = segment.get('distance', 0)
+                                segment_distances.append(round(distance, 2))
+                                
+                    except Exception as e:
+                        segment_distances = []
+                
+                if not segment_distances:
+                    num_products = len(route['products'])
+                    segments_count = num_products + 1
+                    avg_distance = total_distance / segments_count if segments_count > 0 else 0
+                    segment_distances = [round(avg_distance, 2)] * segments_count
+                
+                while len(segment_distances) < 6:
+                    segment_distances.append(0)
+                
+                segment_distances = segment_distances[:6]
+                
+                row = [route_id] + segment_distances + [round(total_distance, 2)]
                 writer.writerow(row)
         
         return len(routes_data)
@@ -454,17 +510,6 @@ class RouteOptimizer:
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
 
-    def load_config(self, config_path: str = "data/last_config.json") -> Dict:
-        """Загрузка конфигурации"""
-        if not Path(config_path).exists():
-            return {}
-        
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {}
-
     def analyze_night_efficiency(self, groups: List[List[List[str]]]) -> Dict:
         """Анализ эффективности группировки по ночам"""
         stats = {
@@ -519,79 +564,3 @@ class RouteOptimizer:
         stats['efficiency_score'] = 1 - (total_changes / total_possible_changes) if total_possible_changes > 0 else 1
         
         return stats
-    
-    def export_distances_to_csv(self, filepath: str = "output/routes/distances_summary.csv"):
-        """Экспорт дистанций между точками маршрутов в CSV"""
-        import glob
-        import json
-        
-        route_files = glob.glob("output/routes/route_*_info.json")
-        if not route_files:
-            raise ValueError("Нет сохраненных маршрутов для экспорта")
-        
-        routes_data = []
-        for file in sorted(route_files, key=lambda x: int(x.split('_')[1])):
-            with open(file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                routes_data.append(data)
-        
-        # Заголовки для дистанций между точками
-        headers = [
-            "№ Выборки",
-            "Старт→Товар1", 
-            "Товар1→Товар2",
-            "Товар2→Товар3", 
-            "Товар3→Товар4",
-            "Товар4→Товар5",
-            "Товар5→Финиш",
-            "Общая дистанция"
-        ]
-        
-        with open(filepath, 'w', encoding='utf-8', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-            
-            for route in routes_data:
-                route_id = route['route_id']
-                total_distance = route['distance_meters']
-                
-                # Загружаем детальный путь из отдельного файла
-                path_file = f"output/routes/route_{route_id}_path.json"
-                segment_distances = []
-                
-                if Path(path_file).exists():
-                    try:
-                        with open(path_file, 'r', encoding='utf-8') as pf:
-                            path_data = json.load(pf)
-                            segments = path_data.get('segments', [])
-                            
-                            # Извлекаем дистанции из сегментов
-                            for segment in segments:
-                                distance = segment.get('distance', 0)
-                                segment_distances.append(round(distance, 2))
-                            
-                            print(f"Маршрут {route_id}: загружено {len(segment_distances)} сегментов из файла")
-                            
-                    except Exception as e:
-                        print(f"Ошибка чтения файла {path_file}: {e}")
-                        segment_distances = []
-                
-                # Если не удалось загрузить детальные данные, распределяем равномерно
-                if not segment_distances:
-                    num_products = len(route['products'])
-                    segments_count = num_products + 1  # старт→товар1, товар1→товар2, ..., товарN→финиш
-                    avg_distance = total_distance / segments_count if segments_count > 0 else 0
-                    segment_distances = [round(avg_distance, 2)] * segments_count
-                    print(f"Маршрут {route_id}: используется равномерное распределение ({segments_count} сегментов)")
-                
-                # Дополняем до 6 сегментов если меньше
-                while len(segment_distances) < 6:
-                    segment_distances.append(0)
-                
-                # Обрезаем если больше 6
-                segment_distances = segment_distances[:6]
-                
-                row = [route_id] + segment_distances + [round(total_distance, 2)]
-                writer.writerow(row)
-        
-        return len(routes_data)

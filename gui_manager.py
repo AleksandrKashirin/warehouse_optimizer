@@ -4,6 +4,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import List
+from datetime import datetime
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageTk
@@ -28,6 +29,11 @@ class WarehouseGUI:
         self.scale_set = False
         self.robot_radius_set = False
         
+        # Для зума карты
+        self.zoom_level = 1.0
+        self.min_zoom = 0.1
+        self.max_zoom = 5.0
+        
         # Для рисования стен
         self.current_wall_chain = []
         self.temp_line_start = None
@@ -36,58 +42,64 @@ class WarehouseGUI:
         self.temp_rect_start = None
 
         self.setup_ui()
-
         self.optimized_samples = None
-
-        self.auto_load_last_config()
-
-        # Для масштабирования карты
-        self.zoom_factor = 1.0
-        self.min_zoom = 0.1
-        self.max_zoom = 5.0
+        self.current_config_name = None
 
     def setup_ui(self):
-        # Панель управления - первая строка
-        control_frame1 = tk.Frame(self.root)
-        control_frame1.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
-
-        tk.Button(control_frame1, text="Загрузить карту", command=self.load_map).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame1, text="Загрузить товары", command=self.load_products).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame1, text="Установить масштаб", command=self.set_scale_mode).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame1, text="Радиус робота", command=self.set_robot_radius).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame1, text="Разместить товары", command=self.place_products_mode).pack(side=tk.LEFT, padx=2)
-
-        # Панель управления - вторая строка
-        control_frame2 = tk.Frame(self.root)
-        control_frame2.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
-
-        tk.Button(control_frame2, text="Рисовать стены", command=self.draw_walls_mode).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame2, text="Рисовать стеллажи", command=self.draw_shelves_mode).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame2, text="Удалить стеллаж", command=self.remove_shelf_mode).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame2, text="Очистить разметку", command=self.clear_markup).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame2, text="Сохранить разметку", command=self.save_markup).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame2, text="Загрузить разметку", command=self.load_markup).pack(side=tk.LEFT, padx=2)
-
-        # Панель управления - третья строка
-        control_frame3 = tk.Frame(self.root)
-        control_frame3.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
-
-        tk.Button(control_frame3, text="Установить старт/финиш", command=self.set_route_points_mode).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame3, text="Генерировать маршруты", command=self.generate_routes).pack(side=tk.LEFT, padx=2)
+        # Создаем главное меню
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
         
-        # НОВАЯ КНОПКА для генерации с ограничениями
-        self.generate_limited_btn = tk.Button(control_frame3, text="Генерировать с ограничениями", 
-                                            command=self.generate_routes_with_limits, bg="lightblue")
-        self.generate_limited_btn.pack(side=tk.LEFT, padx=2)
+        # Меню "Файл"
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Файл", menu=file_menu)
+        file_menu.add_command(label="Новая конфигурация", command=self.new_config)
+        file_menu.add_command(label="Открыть конфигурацию", command=self.open_config)
+        file_menu.add_command(label="Сохранить конфигурацию", command=self.save_config)
+        file_menu.add_command(label="Сохранить как...", command=self.save_config_as)
+        file_menu.add_separator()
+        file_menu.add_command(label="Экспорт результатов в CSV", command=self.export_csv)
+        file_menu.add_command(label="Экспорт дистанций в CSV", command=self.export_distances_csv)
         
-        tk.Button(control_frame3, text="Сохранить товары", command=self.save_products).pack(side=tk.LEFT, padx=2)
-        tk.Button(control_frame3, text="Просмотр маршрутов", command=self.view_routes).pack(side=tk.LEFT, padx=2)
+        # Меню "Конфигурация"
+        config_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Конфигурация", menu=config_menu)
+        config_menu.add_command(label="Загрузить карту", command=self.load_map)
+        config_menu.add_command(label="Установить масштаб", command=self.set_scale_mode)
+        config_menu.add_command(label="Установить радиус робота", command=self.set_robot_radius)
+        config_menu.add_command(label="Установить старт/финиш", command=self.set_route_points_mode)
+        
+        # Меню "Разметка"
+        markup_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Разметка", menu=markup_menu)
+        markup_menu.add_command(label="Рисовать стены", command=self.draw_walls_mode)
+        markup_menu.add_command(label="Рисовать стеллажи", command=self.draw_shelves_mode)
+        markup_menu.add_command(label="Удалить стеллаж", command=self.remove_shelf_mode)
+        markup_menu.add_command(label="Очистить разметку", command=self.clear_markup)
+        markup_menu.add_separator()
+        markup_menu.add_command(label="Сохранить разметку", command=self.save_markup)
+        markup_menu.add_command(label="Загрузить разметку", command=self.load_markup)
+        
+        # Меню "Продукты"
+        products_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Продукты", menu=products_menu)
+        products_menu.add_command(label="Загрузить список товаров", command=self.load_products)
+        products_menu.add_command(label="Разместить товары", command=self.place_products_mode)
+        products_menu.add_command(label="Сохранить товары", command=self.save_products)
+        
+        # Меню "Маршруты"
+        routes_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Маршруты", menu=routes_menu)
+        routes_menu.add_command(label="Генерировать маршруты", command=self.generate_routes)
+        routes_menu.add_command(label="Генерировать с ограничениями", command=self.generate_routes_with_limits)
+        routes_menu.add_separator()
+        routes_menu.add_command(label="Просмотр маршрутов", command=self.view_routes)
 
         # Информационная панель
         info_frame = tk.Frame(self.root)
         info_frame.pack(side=tk.TOP, fill=tk.X, padx=5)
 
-        self.info_label = tk.Label(info_frame, text="Загрузите карту склада", anchor=tk.W)
+        self.info_label = tk.Label(info_frame, text="Создайте новую конфигурацию или откройте существующую", anchor=tk.W)
         self.info_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Статус панель
@@ -110,15 +122,18 @@ class WarehouseGUI:
         self.canvas.config(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<Motion>", self.on_mouse_move)
-        # Привязка событий колеса мыши
-        self.canvas.bind("<MouseWheel>", self.on_mousewheel)  # Windows
-        self.canvas.bind("<Button-4>", self.on_mousewheel)    # Linux scroll up
-        self.canvas.bind("<Button-5>", self.on_mousewheel)    # Linux scroll down
-        
+
+        # Обработка колеса мыши
+        self.canvas.bind("<MouseWheel>", self.on_mousewheel)
+        self.canvas.bind("<Button-4>", self.on_mousewheel)  # Linux
+        self.canvas.bind("<Button-5>", self.on_mousewheel)  # Linux
+                
         # Привязка клавиш
         self.root.bind("<KeyPress>", self.on_key_press)
         self.root.focus_set()
 
+        # Инициализация
+        self.current_config_name = None
         self.update_status()
     
     def on_key_press(self, event):
@@ -130,41 +145,246 @@ class WarehouseGUI:
                 self.info_label.config(text="Цепочка стен сохранена. Нажмите для начала новой цепочки")
     
     def on_mousewheel(self, event):
-        """Обработка колеса мыши для навигации и масштабирования"""
+        """Обработка событий колеса мыши"""
         # Определяем направление прокрутки
         if event.num == 4 or event.delta > 0:
-            delta = 1  # вверх
+            delta = 1
         elif event.num == 5 or event.delta < 0:
-            delta = -1  # вниз
+            delta = -1
         else:
             return
 
-        # Ctrl + колесо = масштабирование
-        if event.state & 0x4:  # Ctrl pressed
-            old_zoom = self.zoom_factor
+        # Проверяем модификаторы
+        ctrl_pressed = (event.state & 0x4) != 0  # Control
+        shift_pressed = (event.state & 0x1) != 0  # Shift
+
+        if ctrl_pressed:
+            # Зум
             if delta > 0:
-                self.zoom_factor = min(self.max_zoom, self.zoom_factor * 1.2)
+                self.zoom_in(event.x, event.y)
             else:
-                self.zoom_factor = max(self.min_zoom, self.zoom_factor / 1.2)
-            
-            if self.zoom_factor != old_zoom:
-                # Получаем позицию курсора на канвасе
-                canvas_x = self.canvas.canvasx(event.x)
-                canvas_y = self.canvas.canvasy(event.y)
-                
-                self.display_map()
-                
-                # Центрируем вид на точке курсора
-                self.canvas.scan_mark(int(event.x), int(event.y))
-                self.canvas.scan_dragto(int(event.x), int(event.y), gain=1)
-        
-        # Shift + колесо = горизонтальная прокрутка
-        elif event.state & 0x1:  # Shift pressed
-            self.canvas.xview_scroll(-delta * 3, "units")
-        
-        # Обычная прокрутка по вертикали
+                self.zoom_out(event.x, event.y)
+        elif shift_pressed:
+            # Горизонтальная прокрутка
+            if delta > 0:
+                self.canvas.xview_scroll(-1, "units")
+            else:
+                self.canvas.xview_scroll(1, "units")
         else:
-            self.canvas.yview_scroll(-delta * 3, "units")
+            # Вертикальная прокрутка
+            if delta > 0:
+                self.canvas.yview_scroll(-1, "units")
+            else:
+                self.canvas.yview_scroll(1, "units")
+
+    def zoom_in(self, mouse_x, mouse_y):
+        """Увеличение масштаба"""
+        if self.zoom_level >= self.max_zoom:
+            return
+        
+        # Сохраняем текущую позицию мыши относительно canvas
+        old_canvasx = self.canvas.canvasx(mouse_x)
+        old_canvasy = self.canvas.canvasy(mouse_y)
+        
+        # Увеличиваем масштаб
+        self.zoom_level *= 1.2
+        if self.zoom_level > self.max_zoom:
+            self.zoom_level = self.max_zoom
+        
+        self.apply_zoom()
+        
+        # Корректируем позицию скролла чтобы мышь осталась на том же месте
+        new_canvasx = old_canvasx * 1.2
+        new_canvasy = old_canvasy * 1.2
+        
+        self.canvas.scan_mark(int(mouse_x), int(mouse_y))
+        self.canvas.scan_dragto(int(mouse_x - (new_canvasx - old_canvasx)), 
+                            int(mouse_y - (new_canvasy - old_canvasy)), gain=1)
+
+    def zoom_out(self, mouse_x, mouse_y):
+        """Уменьшение масштаба"""
+        if self.zoom_level <= self.min_zoom:
+            return
+        
+        # Сохраняем текущую позицию мыши относительно canvas
+        old_canvasx = self.canvas.canvasx(mouse_x)
+        old_canvasy = self.canvas.canvasy(mouse_y)
+        
+        # Уменьшаем масштаб
+        self.zoom_level /= 1.2
+        if self.zoom_level < self.min_zoom:
+            self.zoom_level = self.min_zoom
+        
+        self.apply_zoom()
+        
+        # Корректируем позицию скролла
+        new_canvasx = old_canvasx / 1.2
+        new_canvasy = old_canvasy / 1.2
+        
+        self.canvas.scan_mark(int(mouse_x), int(mouse_y))
+        self.canvas.scan_dragto(int(mouse_x - (new_canvasx - old_canvasx)), 
+                            int(mouse_y - (new_canvasy - old_canvasy)), gain=1)
+
+    def apply_zoom(self):
+        """Применение масштаба к изображению"""
+        if not self.map_image:
+            return
+        
+        # Сохраняем текущую позицию скролла
+        try:
+            scroll_x = self.canvas.canvasx(0) / (self.canvas.winfo_width() * 0.5)
+            scroll_y = self.canvas.canvasy(0) / (self.canvas.winfo_height() * 0.5)
+        except:
+            scroll_x = scroll_y = 0
+        
+        # Создаем изображение нужного размера
+        original_width, original_height = self.map_image.size
+        new_width = int(original_width * self.zoom_level)
+        new_height = int(original_height * self.zoom_level)
+        
+        # Применяем масштаб
+        if self.zoom_level == 1.0:
+            scaled_image = self.map_image
+        else:
+            scaled_image = self.map_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Обновляем PhotoImage
+        self.photo_image = ImageTk.PhotoImage(scaled_image)
+        
+        # Очищаем canvas и добавляем новое изображение
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image)
+        
+        # Обновляем область прокрутки
+        self.canvas.config(scrollregion=(0, 0, new_width, new_height))
+        
+        # Восстанавливаем позицию скролла
+        self.root.after_idle(lambda: self.restore_scroll_position(scroll_x, scroll_y))
+        
+        # Перерисовываем элементы интерфейса с учетом масштаба
+        self.draw_scaled_elements()
+
+    def restore_scroll_position(self, scroll_x, scroll_y):
+        """Восстановление позиции скролла"""
+        try:
+            if scroll_x != 0:
+                self.canvas.xview_moveto(scroll_x)
+            if scroll_y != 0:
+                self.canvas.yview_moveto(scroll_y)
+        except:
+            pass
+
+    def draw_scaled_elements(self):
+        """Перерисовка элементов интерфейса с учетом масштаба"""
+        zoom = self.zoom_level
+        
+        # Отрисовка точек масштаба (если режим установки масштаба активен)
+        if self.mode == "scale":
+            for point in self.scale_points:
+                scaled_x, scaled_y = point[0] * zoom, point[1] * zoom
+                self.canvas.create_oval(
+                    scaled_x - 3, scaled_y - 3, scaled_x + 3, scaled_y + 3, 
+                    fill="red", tags="scale"
+                )
+        
+        # Отрисовка размещенных товаров
+        for product_id, (x, y) in self.route_optimizer.placed_products.items():
+            scaled_x, scaled_y = x * zoom, y * zoom
+            
+            if product_id in self.route_optimizer.access_points:
+                # Товар с доступом
+                self.canvas.create_oval(
+                    scaled_x - 3*zoom, scaled_y - 3*zoom, 
+                    scaled_x + 3*zoom, scaled_y + 3*zoom, 
+                    fill="yellow", outline="orange", width=max(1, int(zoom))
+                )
+                
+                access_x, access_y = self.route_optimizer.access_points[product_id]
+                scaled_ax, scaled_ay = access_x * zoom, access_y * zoom
+                
+                self.canvas.create_oval(
+                    scaled_ax - 2*zoom, scaled_ay - 2*zoom, 
+                    scaled_ax + 2*zoom, scaled_ay + 2*zoom, 
+                    fill="lightgreen", outline="green", width=max(1, int(zoom))
+                )
+                
+                self.canvas.create_line(
+                    scaled_x, scaled_y, scaled_ax, scaled_ay, 
+                    fill="lightblue", width=max(1, int(zoom))
+                )
+            else:
+                # Товар без доступа
+                self.canvas.create_oval(
+                    scaled_x - 3*zoom, scaled_y - 3*zoom, 
+                    scaled_x + 3*zoom, scaled_y + 3*zoom, 
+                    fill="orange", outline="red", width=max(1, int(zoom))
+                )
+            
+            # Подпись товара
+            if zoom >= 0.5:  # Показываем текст только при достаточном масштабе
+                self.canvas.create_text(
+                    scaled_x + 5*zoom, scaled_y - 5*zoom, 
+                    text=product_id, fill="blue", 
+                    font=("Arial", max(8, int(8*zoom)))
+                )
+
+        # Отрисовка точек старта и финиша
+        if self.start_point:
+            x, y = self.start_point
+            scaled_x, scaled_y = x * zoom, y * zoom
+            self.canvas.create_oval(
+                scaled_x - 5*zoom, scaled_y - 5*zoom,
+                scaled_x + 5*zoom, scaled_y + 5*zoom,
+                fill="green", outline="darkgreen", width=max(1, int(2*zoom))
+            )
+            if zoom >= 0.5:
+                self.canvas.create_text(
+                    scaled_x + 7*zoom, scaled_y - 5*zoom, 
+                    text="START", fill="green", 
+                    font=("Arial", max(8, int(8*zoom)))
+                )
+
+        if self.end_point:
+            x, y = self.end_point
+            scaled_x, scaled_y = x * zoom, y * zoom
+            self.canvas.create_oval(
+                scaled_x - 5*zoom, scaled_y - 5*zoom,
+                scaled_x + 5*zoom, scaled_y + 5*zoom,
+                fill="red", outline="darkred", width=max(1, int(2*zoom))
+            )
+            if zoom >= 0.5:
+                self.canvas.create_text(
+                    scaled_x + 7*zoom, scaled_y - 5*zoom, 
+                    text="FINISH", fill="red", 
+                    font=("Arial", max(8, int(8*zoom)))
+                )
+        
+        # Отрисовка временных элементов для рисования стен
+        if self.mode == "draw_walls" and self.current_wall_chain:
+            for point in self.current_wall_chain:
+                scaled_x, scaled_y = point[0] * zoom, point[1] * zoom
+                self.canvas.create_oval(
+                    scaled_x - 2, scaled_y - 2, scaled_x + 2, scaled_y + 2, 
+                    fill="red", tags="temp_wall"
+                )
+            
+            # Линии между точками
+            for i in range(len(self.current_wall_chain) - 1):
+                x1, y1 = self.current_wall_chain[i]
+                x2, y2 = self.current_wall_chain[i + 1]
+                self.canvas.create_line(
+                    x1 * zoom, y1 * zoom, x2 * zoom, y2 * zoom,
+                    fill="red", width=2, tags="temp_wall"
+                )
+        
+        # Временная точка для стеллажей
+        if self.mode == "draw_shelves" and self.temp_rect_start:
+            x, y = self.temp_rect_start
+            scaled_x, scaled_y = x * zoom, y * zoom
+            self.canvas.create_oval(
+                scaled_x - 2, scaled_y - 2, scaled_x + 2, scaled_y + 2, 
+                fill="blue", tags="temp_shelf"
+            )
 
     def draw_walls_mode(self):
         """Режим рисования стен"""
@@ -194,13 +414,13 @@ class WarehouseGUI:
         
         self.current_wall_chain = []
         self.temp_line_start = None
-        self.display_map()
+        self.full_display_refresh()
     
     def clear_markup(self):
         """Очистка разметки"""
         if messagebox.askyesno("Подтверждение", "Очистить всю разметку (стены и стеллажи)?"):
             self.map_processor.clear_markup()
-            self.display_map()
+            self.full_display_refresh()
             self.info_label.config(text="Разметка очищена")
     
     def save_markup(self):
@@ -226,9 +446,9 @@ class WarehouseGUI:
                 self.scale_set = True
                 self.robot_radius_set = True
                 self.update_status()
-                self.display_map()
+                self.full_display_refresh()
                 messagebox.showinfo("Успех", "Разметка загружена")
-                self.save_current_config()
+                self.auto_save()
             else:
                 messagebox.showerror("Ошибка", "Не удалось загрузить разметку")
 
@@ -256,15 +476,21 @@ class WarehouseGUI:
                 self.info_label.config(
                     text=f"Карта загружена: {self.map_processor.width}x{self.map_processor.height} пикселей"
                 )
-                self.save_current_config()
+                self.auto_save()
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось загрузить карту: {e}")
+        
 
     def export_csv(self):
         """Экспорт всех маршрутов в CSV"""
+        if not self.current_config_name:
+            messagebox.showwarning("Предупреждение", "Нет активной конфигурации")
+            return
+            
         try:
-            count = self.route_optimizer.export_routes_to_csv()
-            messagebox.showinfo("Успех", f"Экспортировано {count} маршрутов в output/routes/routes_summary.csv")
+            routes_dir = Path("output") / self.current_config_name / "routes"
+            count = self.route_optimizer.export_routes_to_csv(str(routes_dir / "routes_summary.csv"), str(routes_dir))
+            messagebox.showinfo("Успех", f"Экспортировано {count} маршрутов в {routes_dir}/routes_summary.csv")
         except ValueError as e:
             messagebox.showwarning("Внимание", str(e))
         except Exception as e:
@@ -287,10 +513,12 @@ class WarehouseGUI:
         # Добавляем информацию о наличии данных о количестве
         if self.route_optimizer.has_amount_data():
             status_parts.append("Количества: есть")
-            self.generate_limited_btn.config(state="normal")
         else:
             status_parts.append("Количества: нет")
-            self.generate_limited_btn.config(state="disabled")
+        
+        # Добавляем информацию о текущей конфигурации
+        if hasattr(self, 'current_config_name') and self.current_config_name:
+            status_parts.append(f"Конфигурация: {self.current_config_name}")
 
         self.status_label.config(text=" | ".join(status_parts))
 
@@ -311,12 +539,12 @@ class WarehouseGUI:
             self.info_label.config(
                 text=f"Радиус робота: {radius:.2f} м ({self.map_processor.robot_radius_pixels} пикселей)"
             )
-            self.display_map()
+            self.refresh_elements_only()
 
     def set_scale_mode(self):
         self.mode = "scale"
         self.scale_points = []
-        self.canvas.delete("scale")
+        self.draw_scaled_elements()
         self.info_label.config(text="Кликните на две точки с известным расстоянием")
 
     def place_products_mode(self):
@@ -328,6 +556,23 @@ class WarehouseGUI:
             return
         self.mode = "place"
         self.show_product_selector()
+    
+    def refresh_elements_only(self):
+        """Обновление только элементов интерфейса без сброса зума и позиции"""
+        self.draw_scaled_elements()
+
+    def full_display_refresh(self):
+        """Полное обновление с сохранением зума и позиции"""
+        if self.map_processor.original_image is None:
+            return
+
+        # Получаем изображение с разметкой
+        img = self.map_processor.get_markup_image()
+        if img is None:
+            return
+
+        self.map_image = img
+        self.apply_zoom()  # Сохраняет позицию благодаря обновленному методу
 
     def show_product_selector(self):
         selector = tk.Toplevel(self.root)
@@ -411,8 +656,8 @@ class WarehouseGUI:
         self.mode = "route_points"
         self.start_point = None
         self.end_point = None
-        self.canvas.delete("route_point")
-        self.display_map()
+        self.draw_scaled_elements()
+        
         self.info_label.config(
             text="Кликните в ПРОХОДЕ (белая область) для установки точки СТАРТА"
         )
@@ -426,7 +671,7 @@ class WarehouseGUI:
             try:
                 self.current_products_path = filepath
                 self.route_optimizer.load_products(filepath)
-                self.display_map()
+                self.refresh_elements_only()
                 self.update_status()  # Важно обновить статус после загрузки
                 
                 count = len(self.route_optimizer.products)
@@ -440,7 +685,7 @@ class WarehouseGUI:
                     info_text += f", с количеством: {with_amount}, общее количество: {total_amount}"
                     
                 self.info_label.config(text=info_text)
-                self.save_current_config() 
+                self.auto_save() 
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось загрузить товары: {e}")
 
@@ -458,12 +703,20 @@ class WarehouseGUI:
                 messagebox.showerror("Ошибка", f"Не удалось сохранить: {e}")
 
     def on_canvas_click(self, event):
-        x = self.canvas.canvasx(event.x)
-        y = self.canvas.canvasy(event.y)
+        # Пересчитываем координаты с учетом масштаба
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        x = canvas_x / self.zoom_level
+        y = canvas_y / self.zoom_level
 
         if self.mode == "scale":
             self.scale_points.append((x, y))
-            self.canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill="red", tags="scale")
+            # Отображаем точку с учетом зума
+            scaled_x, scaled_y = x * self.zoom_level, y * self.zoom_level
+            self.canvas.create_oval(
+                scaled_x - 3, scaled_y - 3, scaled_x + 3, scaled_y + 3, 
+                fill="red", tags="scale"
+            )
 
             if len(self.scale_points) == 2:
                 pixel_dist = math.sqrt(
@@ -535,7 +788,7 @@ class WarehouseGUI:
                 x2, y2 = ix, iy
                 
                 self.map_processor.add_shelf_rect(x1, y1, x2, y2)
-                self.display_map()
+                self.full_display_refresh()
                 
                 self.temp_rect_start = None
                 self.canvas.delete("temp_shelf")
@@ -545,7 +798,7 @@ class WarehouseGUI:
             ix, iy = int(x), int(y)
             
             if self.map_processor.remove_shelf_at(ix, iy):
-                self.display_map()
+                self.full_display_refresh()
                 self.info_label.config(text="Стеллаж удален. Кликните на другой стеллаж для удаления")
             else:
                 self.info_label.config(text="Стеллаж не найден. Кликните точно на синий прямоугольник")
@@ -560,8 +813,9 @@ class WarehouseGUI:
                 access = self.map_processor.find_nearest_walkable(ix, iy, max_radius=search_radius)
                 if access:
                     self.route_optimizer.place_product(self.selected_product_id, ix, iy, access)
-                    self.display_map()
+                    self.full_display_refresh()
                     self.info_label.config(text=f"Товар размещен на стеллаже с точкой доступа")
+                    self.auto_save()
                     self.show_product_selector()
                 else:
                     scale_info = f"масштаб: 1px = {self.map_processor.scale:.3f}м"
@@ -585,8 +839,9 @@ class WarehouseGUI:
                                 access = self.map_processor.find_nearest_walkable(sx, sy, max_radius=search_radius)
                                 if access:
                                     self.route_optimizer.place_product(self.selected_product_id, sx, sy, access)
-                                    self.display_map()
+                                    self.full_display_refresh()
                                     self.info_label.config(text=f"Товар размещен на ближайшем стеллаже с точкой доступа")
+                                    self.auto_save()
                                     self.show_product_selector()
                                     found = True
                                     break
@@ -604,7 +859,7 @@ class WarehouseGUI:
             if not self.start_point:
                 if self.map_processor.is_walkable(ix, iy, check_radius=False):
                     self.start_point = (ix, iy)
-                    self.display_map()
+                    self.full_display_refresh()
                     self.info_label.config(
                         text="Кликните в ПРОХОДЕ для установки точки ФИНИША"
                     )
@@ -612,7 +867,7 @@ class WarehouseGUI:
                     nearest = self.map_processor.find_nearest_walkable(ix, iy, max_radius=10)
                     if nearest:
                         self.start_point = nearest
-                        self.display_map()
+                        self.full_display_refresh()
                         self.info_label.config(
                             text="Кликните в ПРОХОДЕ для установки точки ФИНИША"
                         )
@@ -625,22 +880,22 @@ class WarehouseGUI:
             elif not self.end_point:
                 if self.map_processor.is_walkable(ix, iy, check_radius=False):
                     self.end_point = (ix, iy)
-                    self.display_map()
+                    self.full_display_refresh()
                     self.info_label.config(
                         text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
                     )
                     self.mode = "view"
-                    self.save_current_config()
+                    self.auto_save()
                 else:
                     nearest = self.map_processor.find_nearest_walkable(ix, iy, max_radius=10)
                     if nearest:
                         self.end_point = nearest
-                        self.display_map()
+                        self.full_display_refresh()
                         self.info_label.config(
                             text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
                         )
                         self.mode = "view"
-                        self.save_current_config()
+                        self.auto_save() 
                     else:
                         messagebox.showwarning(
                             "Внимание",
@@ -648,8 +903,10 @@ class WarehouseGUI:
                         )
 
     def on_mouse_move(self, event):
-        x = self.canvas.canvasx(event.x)
-        y = self.canvas.canvasy(event.y)
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        x = canvas_x / self.zoom_level
+        y = canvas_y / self.zoom_level
         ix, iy = int(x), int(y)
 
         if 0 <= ix < self.map_processor.width and 0 <= iy < self.map_processor.height:
@@ -684,6 +941,9 @@ class WarehouseGUI:
         if img is None:
             return
 
+        self.map_image = img
+        self.apply_zoom()
+
         draw = ImageDraw.Draw(img)
 
         # Отрисовка размещенных товаров
@@ -714,12 +974,6 @@ class WarehouseGUI:
             draw.text((x + 7, y - 5), "FINISH", fill="red")
 
         self.map_image = img
-
-        # Применяем масштабирование если нужно
-        if self.zoom_factor != 1.0:
-            new_width = int(img.width * self.zoom_factor)
-            new_height = int(img.height * self.zoom_factor)
-            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
         self.photo_image = ImageTk.PhotoImage(img)
 
@@ -836,6 +1090,14 @@ class WarehouseGUI:
 
     def _process_routes(self, samples, generation_type):
         """Общий метод для обработки сгенерированных выборок"""
+        if not self.current_config_name:
+            messagebox.showwarning("Предупреждение", "Сначала сохраните конфигурацию")
+            return
+            
+        # Создаем папку для маршрутов этой конфигурации
+        routes_dir = Path("output") / self.current_config_name / "routes"
+        routes_dir.mkdir(parents=True, exist_ok=True)
+        
         progress = tk.Toplevel(self.root)
         progress.title("Генерация маршрутов")
         progress_label = tk.Label(progress, text="Инициализация...")
@@ -871,7 +1133,7 @@ class WarehouseGUI:
                     ordered_sample = sample
 
                 self.save_route_image(i + 1, path, ordered_sample, distance)
-                self.route_optimizer.save_route_info(i + 1, ordered_sample, distance, path)
+                self.route_optimizer.save_route_info(i + 1, ordered_sample, distance, path, str(routes_dir))
                 self.save_route_segments(i + 1, ordered_sample, path)
                 successful_routes += 1
             else:
@@ -887,7 +1149,7 @@ class WarehouseGUI:
                 "Успех",
                 f"Сгенерировано маршрутов ({generation_type}): {successful_routes}\n"
                 f"Не удалось построить: {failed_routes}\n"
-                f"Сохранено в: output/routes/",
+                f"Сохранено в: output/{self.current_config_name}/routes/",
             )
         else:
             access_count = len(self.route_optimizer.access_points)
@@ -906,10 +1168,11 @@ class WarehouseGUI:
     
     def save_route_segments(self, route_id: int, products: List[str], path: List[tuple]):
         """Сохранение детальной информации о сегментах маршрута из существующего пути"""
-        if not products or not path:
+        if not products or not path or not self.current_config_name:
             return
         
-        Path("output/routes").mkdir(parents=True, exist_ok=True)
+        routes_dir = Path("output") / self.current_config_name / "routes"
+        routes_dir.mkdir(parents=True, exist_ok=True)
         
         # Получаем все ключевые точки маршрута
         waypoints = [self.start_point]
@@ -993,15 +1256,16 @@ class WarehouseGUI:
             "waypoint_indices": waypoint_indices
         }
         
-        filepath = f"output/routes/route_{route_id}_path.json"
+        filepath = routes_dir / f"route_{route_id}_path.json"
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(path_data, f, ensure_ascii=False, indent=2)
 
     def save_route_image(self, route_id: int, path: List[tuple], products: List[str], distance: float):
-        if not self.map_image:
+        if not self.map_image or not self.current_config_name:
             return
 
-        Path("output/routes").mkdir(parents=True, exist_ok=True)
+        routes_dir = Path("output") / self.current_config_name / "routes"
+        routes_dir.mkdir(parents=True, exist_ok=True)
 
         map_width, map_height = self.map_image.size
         info_width = 100
@@ -1184,16 +1448,22 @@ class WarehouseGUI:
 
                 y_pos += 15
 
-        filepath = f"output/routes/route_{route_id}.png"
+        filepath = routes_dir / f"route_{route_id}.png"
         final_img.save(filepath)
 
     def view_routes(self):
         """Просмотр сохраненных маршрутов"""
+        if not self.current_config_name:
+            messagebox.showwarning("Предупреждение", "Нет активной конфигурации")
+            return
+            
         import glob
 
-        route_files = glob.glob("output/routes/route_*_info.json")
+        routes_dir = Path("output") / self.current_config_name / "routes"
+        route_files = glob.glob(str(routes_dir / "route_*_info.json"))
+        
         if not route_files:
-            messagebox.showinfo("Информация", "Нет сохраненных маршрутов")
+            messagebox.showinfo("Информация", f"Нет сохраненных маршрутов для конфигурации '{self.current_config_name}'")
             return
 
         viewer = tk.Toplevel(self.root)
@@ -1255,7 +1525,7 @@ class WarehouseGUI:
             selection = listbox.curselection()
             if selection:
                 route_id = routes_data[selection[0]]["route_id"]
-                image_path = Path(f"output/routes/route_{route_id}.png").absolute()
+                image_path = routes_dir / f"route_{route_id}.png"
                 if image_path.exists():
                     import os
                     if os.name == "nt":
@@ -1410,36 +1680,158 @@ class WarehouseGUI:
         tk.Button(button_frame, text="Экспорт CSV", command=self.export_csv).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Дистанции CSV", command=self.export_distances_csv).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Закрыть", command=result_window.destroy).pack(side=tk.RIGHT, padx=5)
-    
-    def auto_load_last_config(self):
-        """Автоматическая загрузка последней конфигурации"""
-        config = self.route_optimizer.load_config()
-        if not config:
+
+    def export_distances_csv(self):
+        """Экспорт дистанций между точками маршрутов в CSV"""
+        if not self.current_config_name:
+            messagebox.showwarning("Предупреждение", "Нет активной конфигурации")
             return
-        
+            
         try:
+            routes_dir = Path("output") / self.current_config_name / "routes"
+            count = self.route_optimizer.export_distances_to_csv(str(routes_dir / "distances_summary.csv"), str(routes_dir))
+            messagebox.showinfo("Успех", f"Экспортировано {count} маршрутов с дистанциями в {routes_dir}/distances_summary.csv")
+        except ValueError as e:
+            messagebox.showwarning("Внимание", str(e))
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка экспорта дистанций: {e}")
+    
+    def new_config(self):
+        """Создание новой конфигурации"""
+        self.current_config_name = None
+        self.map_processor = MapProcessor()
+        self.route_optimizer = RouteOptimizer()
+        self.start_point = None
+        self.end_point = None
+        self.scale_set = False
+        self.robot_radius_set = False
+        
+        self.canvas.delete("all")
+        self.info_label.config(text="Новая конфигурация создана. Загрузите карту склада")
+        self.update_status()
+
+    def open_config(self):
+        """Открытие существующей конфигурации"""
+        configs_dir = Path("configs")
+        if not configs_dir.exists():
+            messagebox.showinfo("Информация", "Нет сохраненных конфигураций")
+            return
+            
+        config_dirs = [d for d in configs_dir.iterdir() if d.is_dir()]
+        if not config_dirs:
+            messagebox.showinfo("Информация", "Нет сохраненных конфигураций")
+            return
+            
+        # Диалог выбора конфигурации
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Выбор конфигурации")
+        dialog.geometry("400x300")
+        
+        tk.Label(dialog, text="Выберите конфигурацию:", font=("Arial", 12)).pack(pady=10)
+        
+        listbox = tk.Listbox(dialog, height=10)
+        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        for config_dir in sorted(config_dirs):
+            listbox.insert(tk.END, config_dir.name)
+        
+        def load_selected():
+            selection = listbox.curselection()
+            if selection:
+                config_name = listbox.get(selection[0])
+                self.load_config_by_name(config_name)
+                dialog.destroy()
+        
+        tk.Button(dialog, text="Загрузить", command=load_selected).pack(pady=10)
+        
+    def save_config(self):
+        """Сохранение текущей конфигурации"""
+        if not self.current_config_name:
+            self.save_config_as()
+            return
+            
+        self.save_config_by_name(self.current_config_name)
+
+    def save_config_as(self):
+        """Сохранение конфигурации с новым именем"""
+        if not hasattr(self, 'current_map_path'):
+            messagebox.showwarning("Предупреждение", "Сначала загрузите карту")
+            return
+            
+        # Предлагаем имя на основе карты
+        map_name = Path(self.current_map_path).stem if hasattr(self, 'current_map_path') else "new_config"
+        
+        name = simpledialog.askstring("Сохранение конфигурации", 
+                                    "Введите имя конфигурации:", initialvalue=map_name)
+        if name:
+            self.save_config_by_name(name)
+            self.current_config_name = name
+
+    def load_config_by_name(self, config_name):
+        """Загрузка конфигурации по имени"""
+        config_path = Path("configs") / config_name / "config.json"
+        
+        if not config_path.exists():
+            messagebox.showerror("Ошибка", f"Конфигурация {config_name} не найдена")
+            return
+            
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
             # Загружаем карту
             if config.get('map_path') and Path(config['map_path']).exists():
                 self.current_map_path = config['map_path']
                 self.map_processor.load_map(config['map_path'])
+            else:
+                messagebox.showwarning("Предупреждение", f"Файл карты не найден: {config.get('map_path')}")
+                return
                 
+            # Восстанавливаем настройки карты
+            self.map_processor.scale = config.get('scale', 0.1)
+            self.map_processor.robot_radius_meters = config.get('robot_radius_meters', 0.3)
+            self.map_processor._update_robot_radius_pixels()
+            
+            # Восстанавливаем разметку
+            self.map_processor.walls = config.get('walls', [])
+            self.map_processor.shelves = config.get('shelves', [])
+            self.map_processor._rebuild_grid()
+            
             # Загружаем товары
-            if config.get('products_path') and Path(config['products_path']).exists():
-                self.route_optimizer.load_products(config['products_path'])
-                self.current_products_path = config['products_path']
+            if config.get('products'):
+                self.route_optimizer.products = {}
+                self.route_optimizer.placed_products = {}
+                self.route_optimizer.access_points = {}
                 
-            # Загружаем разметку
-            if config.get('markup_path') and Path(config['markup_path']).exists():
-                self.map_processor.load_markup(config['markup_path'])
-                self.current_markup_path = config['markup_path']
-                
+                for product_data in config['products']:
+                    from route_optimizer import Product
+                    product = Product(
+                        id=product_data['id'],
+                        name=product_data['name'],
+                        x=product_data.get('x', -1),
+                        y=product_data.get('y', -1),
+                        access_x=product_data.get('access_x', -1),
+                        access_y=product_data.get('access_y', -1),
+                        amount=product_data.get('amount', 0)
+                    )
+                    self.route_optimizer.products[product.id] = product
+                    
+                    if product.x >= 0 and product.y >= 0:
+                        self.route_optimizer.placed_products[product.id] = (product.x, product.y)
+                        
+                    if product.access_x >= 0 and product.access_y >= 0:
+                        self.route_optimizer.access_points[product.id] = (product.access_x, product.access_y)
+            
             # Восстанавливаем точки старт/финиш
             start_point = config.get('start_point')
             end_point = config.get('end_point')
             self.start_point = tuple(start_point) if start_point and len(start_point) == 2 else None
             self.end_point = tuple(end_point) if end_point and len(end_point) == 2 else None
+            
+            # Устанавливаем флаги
             self.scale_set = config.get('scale_set', False)
             self.robot_radius_set = config.get('robot_radius_set', False)
+            self.current_config_name = config_name
             
             self.update_status()
             self.display_map()
@@ -1449,7 +1841,7 @@ class WarehouseGUI:
             placed = len(self.route_optimizer.placed_products)
             access_count = len(self.route_optimizer.access_points)
             
-            info_text = f"Конфигурация загружена: {count} товаров, {placed} размещено, {access_count} с доступом"
+            info_text = f"Конфигурация '{config_name}' загружена: {count} товаров, {placed} размещено, {access_count} с доступом"
             if self.route_optimizer.has_amount_data():
                 with_amount = sum(1 for p in self.route_optimizer.products.values() if p.amount > 0)
                 info_text += f", {with_amount} с количеством"
@@ -1457,33 +1849,69 @@ class WarehouseGUI:
             self.info_label.config(text=info_text)
             
         except Exception as e:
-            print(f"Ошибка загрузки конфигурации: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось загрузить конфигурацию: {e}")
 
-    def save_current_config(self):
-        """Сохранение текущей конфигурации"""
+    def save_config_by_name(self, config_name):
+        """Сохранение конфигурации под указанным именем"""
+        if not hasattr(self, 'current_map_path'):
+            messagebox.showwarning("Предупреждение", "Нет карты для сохранения")
+            return
+            
+        # Создаем структуру папок
+        config_dir = Path("configs") / config_name
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Создаем output папку для этой конфигурации
+        output_dir = Path("output") / config_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "routes").mkdir(exist_ok=True)
+        
+        # Собираем данные о товарах
+        products_data = []
+        for product in self.route_optimizer.products.values():
+            products_data.append({
+                'id': product.id,
+                'name': product.name,
+                'x': product.x,
+                'y': product.y,
+                'access_x': product.access_x,
+                'access_y': product.access_y,
+                'amount': product.amount
+            })
+        
+        # Создаем конфигурацию
         config = {
-            "map_path": getattr(self, 'current_map_path', ''),
-            "products_path": getattr(self, 'current_products_path', ''),
-            "markup_path": getattr(self, 'current_markup_path', ''),
-            "start_point": self.start_point,
-            "end_point": self.end_point,
-            "scale_set": self.scale_set,
-            "robot_radius_set": self.robot_radius_set
+            'name': config_name,
+            'map_path': getattr(self, 'current_map_path', ''),
+            'scale': self.map_processor.scale,
+            'robot_radius_meters': self.map_processor.robot_radius_meters,
+            'scale_set': self.scale_set,
+            'robot_radius_set': self.robot_radius_set,
+            'walls': self.map_processor.walls,
+            'shelves': self.map_processor.shelves,
+            'products': products_data,
+            'start_point': self.start_point,
+            'end_point': self.end_point,
+            'created': datetime.now().isoformat(),
+            'modified': datetime.now().isoformat()
         }
         
-        Path("data").mkdir(exist_ok=True)
-        with open("data/last_config.json", 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-
-    def export_distances_csv(self):
-        """Экспорт дистанций между точками маршрутов в CSV"""
+        config_path = config_dir / "config.json"
+        
         try:
-            count = self.route_optimizer.export_distances_to_csv()
-            messagebox.showinfo("Успех", f"Экспортировано {count} маршрутов с дистанциями в output/routes/distances_summary.csv")
-        except ValueError as e:
-            messagebox.showwarning("Внимание", str(e))
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+                
+            self.current_config_name = config_name
+            messagebox.showinfo("Успех", f"Конфигурация '{config_name}' сохранена")
+            
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка экспорта дистанций: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось сохранить конфигурацию: {e}")
+
+    def auto_save(self):
+        """Автосохранение текущей конфигурации"""
+        if self.current_config_name and hasattr(self, 'current_map_path'):
+            self.save_config_by_name(self.current_config_name)
 
 if __name__ == "__main__":
     root = tk.Tk()
