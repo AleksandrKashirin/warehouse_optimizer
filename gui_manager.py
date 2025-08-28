@@ -230,10 +230,10 @@ class WarehouseGUI:
         if not self.map_image:
             return
         
-        # Сохраняем текущую позицию скролла
+        # Сохраняем текущую позицию скролла более точно
         try:
-            scroll_x = self.canvas.canvasx(0) / (self.canvas.winfo_width() * 0.5)
-            scroll_y = self.canvas.canvasy(0) / (self.canvas.winfo_height() * 0.5)
+            scroll_x = self.canvas.xview()[0]
+            scroll_y = self.canvas.yview()[0]
         except:
             scroll_x = scroll_y = 0
         
@@ -252,14 +252,16 @@ class WarehouseGUI:
         self.photo_image = ImageTk.PhotoImage(scaled_image)
         
         # Очищаем canvas и добавляем новое изображение
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image)
+        self.canvas.delete("map_image")
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image, tags="map_image")
+        self.canvas.tag_lower("map_image")  # Карта на заднем плане
         
         # Обновляем область прокрутки
         self.canvas.config(scrollregion=(0, 0, new_width, new_height))
         
         # Восстанавливаем позицию скролла
-        self.root.after_idle(lambda: self.restore_scroll_position(scroll_x, scroll_y))
+        if scroll_x != 0 or scroll_y != 0:
+            self.root.after_idle(lambda: self.restore_scroll_position(scroll_x, scroll_y))
         
         # Перерисовываем элементы интерфейса с учетом масштаба
         self.draw_scaled_elements()
@@ -278,6 +280,9 @@ class WarehouseGUI:
         """Перерисовка элементов интерфейса с учетом масштаба"""
         zoom = self.zoom_level
         
+        # Удаляем все интерфейсные элементы
+        self.canvas.delete("interface_elements")
+
         # Отрисовка точек масштаба (если режим установки масштаба активен)
         if self.mode == "scale":
             for point in self.scale_points:
@@ -335,13 +340,15 @@ class WarehouseGUI:
             self.canvas.create_oval(
                 scaled_x - 5*zoom, scaled_y - 5*zoom,
                 scaled_x + 5*zoom, scaled_y + 5*zoom,
-                fill="green", outline="darkgreen", width=max(1, int(2*zoom))
+                fill="green", outline="darkgreen", width=max(1, int(2*zoom)),
+                tags="interface_elements"
             )
             if zoom >= 0.5:
                 self.canvas.create_text(
                     scaled_x + 7*zoom, scaled_y - 5*zoom, 
                     text="START", fill="green", 
-                    font=("Arial", max(8, int(8*zoom)))
+                    font=("Arial", max(8, int(8*zoom))),
+                    tags="interface_elements"
                 )
 
         if self.end_point:
@@ -350,22 +357,24 @@ class WarehouseGUI:
             self.canvas.create_oval(
                 scaled_x - 5*zoom, scaled_y - 5*zoom,
                 scaled_x + 5*zoom, scaled_y + 5*zoom,
-                fill="red", outline="darkred", width=max(1, int(2*zoom))
+                fill="red", outline="darkred", width=max(1, int(2*zoom)),
+                tags="interface_elements"
             )
             if zoom >= 0.5:
                 self.canvas.create_text(
                     scaled_x + 7*zoom, scaled_y - 5*zoom, 
                     text="FINISH", fill="red", 
-                    font=("Arial", max(8, int(8*zoom)))
+                    font=("Arial", max(8, int(8*zoom))),
+                    tags="interface_elements"
                 )
-        
+                
         # Отрисовка временных элементов для рисования стен
         if self.mode == "draw_walls" and self.current_wall_chain:
             for point in self.current_wall_chain:
                 scaled_x, scaled_y = point[0] * zoom, point[1] * zoom
                 self.canvas.create_oval(
                     scaled_x - 2, scaled_y - 2, scaled_x + 2, scaled_y + 2, 
-                    fill="red", tags="temp_wall"
+                    fill="red", tags="interface_elements"
                 )
             
             # Линии между точками
@@ -374,7 +383,7 @@ class WarehouseGUI:
                 x2, y2 = self.current_wall_chain[i + 1]
                 self.canvas.create_line(
                     x1 * zoom, y1 * zoom, x2 * zoom, y2 * zoom,
-                    fill="red", width=2, tags="temp_wall"
+                    fill="red", width=2, tags="interface_elements"
                 )
         
         # Временная точка для стеллажей
@@ -383,7 +392,41 @@ class WarehouseGUI:
             scaled_x, scaled_y = x * zoom, y * zoom
             self.canvas.create_oval(
                 scaled_x - 2, scaled_y - 2, scaled_x + 2, scaled_y + 2, 
-                fill="blue", tags="temp_shelf"
+                fill="blue", tags="interface_elements"
+            )
+    
+    def refresh_temp_elements(self):
+        """Обновление только временных элементов рисования"""
+        zoom = self.zoom_level
+        
+        # Удаляем только временные элементы
+        self.canvas.delete("temp_elements")
+        
+        # Отрисовка временных элементов для рисования стен
+        if self.mode == "draw_walls" and self.current_wall_chain:
+            for point in self.current_wall_chain:
+                scaled_x, scaled_y = point[0] * zoom, point[1] * zoom
+                self.canvas.create_oval(
+                    scaled_x - 2, scaled_y - 2, scaled_x + 2, scaled_y + 2, 
+                    fill="red", tags="temp_elements"
+                )
+            
+            # Линии между точками
+            for i in range(len(self.current_wall_chain) - 1):
+                x1, y1 = self.current_wall_chain[i]
+                x2, y2 = self.current_wall_chain[i + 1]
+                self.canvas.create_line(
+                    x1 * zoom, y1 * zoom, x2 * zoom, y2 * zoom,
+                    fill="red", width=2, tags="temp_elements"
+                )
+        
+        # Временная точка для стеллажей
+        if self.mode == "draw_shelves" and self.temp_rect_start:
+            x, y = self.temp_rect_start
+            scaled_x, scaled_y = x * zoom, y * zoom
+            self.canvas.create_oval(
+                scaled_x - 2, scaled_y - 2, scaled_x + 2, scaled_y + 2, 
+                fill="blue", tags="temp_elements"
             )
 
     def draw_walls_mode(self):
@@ -744,18 +787,10 @@ class WarehouseGUI:
                 # Начинаем новую линию
                 self.temp_line_start = (ix, iy)
                 self.current_wall_chain.append((ix, iy))
-                self.canvas.create_oval(ix - 2, iy - 2, ix + 2, iy + 2, fill="red", tags="temp_wall")
+                self.refresh_temp_elements()  # Вместо refresh_elements_only()
             else:
                 # Заканчиваем линию
                 self.current_wall_chain.append((ix, iy))
-                
-                # Рисуем линию
-                self.canvas.create_line(
-                    self.temp_line_start[0], self.temp_line_start[1], 
-                    ix, iy, 
-                    fill="red", width=2, tags="temp_wall"
-                )
-                self.canvas.create_oval(ix - 2, iy - 2, ix + 2, iy + 2, fill="red", tags="temp_wall")
                 
                 # Проверяем замыкание (клик рядом с первой точкой)
                 if len(self.current_wall_chain) > 2:
@@ -763,16 +798,13 @@ class WarehouseGUI:
                     dist = math.sqrt((ix - first_point[0])**2 + (iy - first_point[1])**2)
                     if dist < 10:  # Замыкаем если близко к первой точке
                         self.current_wall_chain.append(first_point)
-                        self.canvas.create_line(
-                            ix, iy, first_point[0], first_point[1],
-                            fill="red", width=2, tags="temp_wall"
-                        )
                         self.save_wall_chain()
-                        self.canvas.delete("temp_wall")
+                        self.canvas.delete("temp_elements")  # Очищаем временные элементы
                         self.info_label.config(text="Многоугольник замкнут и сохранен")
                         return
                 
                 self.temp_line_start = (ix, iy)
+                self.refresh_temp_elements()  # Обновляем только временные элементы
 
         elif self.mode == "draw_shelves":
             ix, iy = int(x), int(y)
@@ -780,7 +812,7 @@ class WarehouseGUI:
             if not self.temp_rect_start:
                 # Начинаем прямоугольник
                 self.temp_rect_start = (ix, iy)
-                self.canvas.create_oval(ix - 2, iy - 2, ix + 2, iy + 2, fill="blue", tags="temp_shelf")
+                self.refresh_temp_elements()  # Вместо refresh_elements_only()
                 self.info_label.config(text="Кликните вторую точку для завершения прямоугольника")
             else:
                 # Заканчиваем прямоугольник
@@ -788,17 +820,67 @@ class WarehouseGUI:
                 x2, y2 = ix, iy
                 
                 self.map_processor.add_shelf_rect(x1, y1, x2, y2)
-                self.full_display_refresh()
+                
+                # Вместо full_display_refresh() используем более осторожный подход
+                if self.map_processor.original_image is None:
+                    return
+                img = self.map_processor.get_markup_image()
+                if img is None:
+                    return
+                self.map_image = img
+                
+                # Создаем масштабированное изображение без смещения карты
+                original_width, original_height = self.map_image.size
+                new_width = int(original_width * self.zoom_level)
+                new_height = int(original_height * self.zoom_level)
+                
+                if self.zoom_level == 1.0:
+                    scaled_image = self.map_image
+                else:
+                    scaled_image = self.map_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                self.photo_image = ImageTk.PhotoImage(scaled_image)
+                
+                # Обновляем только изображение карты, не трогая скролл
+                self.canvas.delete("map_image")
+                self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image, tags="map_image")
+                self.canvas.tag_lower("map_image")  # Перемещаем карту на задний план
                 
                 self.temp_rect_start = None
-                self.canvas.delete("temp_shelf")
+                self.canvas.delete("temp_elements")  # Очищаем временные элементы
+                self.draw_scaled_elements()  # Перерисовываем интерфейсные элементы
                 self.info_label.config(text="Стеллаж добавлен. Кликните для следующего")
 
         elif self.mode == "remove_shelf":
             ix, iy = int(x), int(y)
             
             if self.map_processor.remove_shelf_at(ix, iy):
-                self.full_display_refresh()
+                # Тот же осторожный подход без смещения карты
+                if self.map_processor.original_image is None:
+                    return
+                img = self.map_processor.get_markup_image()
+                if img is None:
+                    return
+                self.map_image = img
+                
+                # Создаем масштабированное изображение без смещения карты
+                original_width, original_height = self.map_image.size
+                new_width = int(original_width * self.zoom_level)
+                new_height = int(original_height * self.zoom_level)
+                
+                if self.zoom_level == 1.0:
+                    scaled_image = self.map_image
+                else:
+                    scaled_image = self.map_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                self.photo_image = ImageTk.PhotoImage(scaled_image)
+                
+                # Обновляем только изображение карты, не трогая скролл
+                self.canvas.delete("map_image")
+                self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image, tags="map_image")
+                self.canvas.tag_lower("map_image")  # Перемещаем карту на задний план
+                
+                self.draw_scaled_elements()  # Перерисовываем интерфейсные элементы
                 self.info_label.config(text="Стеллаж удален. Кликните на другой стеллаж для удаления")
             else:
                 self.info_label.config(text="Стеллаж не найден. Кликните точно на синий прямоугольник")
@@ -859,7 +941,7 @@ class WarehouseGUI:
             if not self.start_point:
                 if self.map_processor.is_walkable(ix, iy, check_radius=False):
                     self.start_point = (ix, iy)
-                    self.full_display_refresh()
+                    self.draw_scaled_elements()  # Вместо refresh_elements_only()
                     self.info_label.config(
                         text="Кликните в ПРОХОДЕ для установки точки ФИНИША"
                     )
@@ -880,7 +962,7 @@ class WarehouseGUI:
             elif not self.end_point:
                 if self.map_processor.is_walkable(ix, iy, check_radius=False):
                     self.end_point = (ix, iy)
-                    self.full_display_refresh()
+                    self.draw_scaled_elements() 
                     self.info_label.config(
                         text=f"Старт: {self.start_point}, Финиш: {self.end_point}"
                     )

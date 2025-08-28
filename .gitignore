@@ -16,6 +16,7 @@ venv/
 
 # Project specific
 data/
+output/
 data/*.bmp
 data/*.json
 data/*.txt
@@ -24,7 +25,7 @@ data/photos/*.png
 output/routes/*.png
 output/routes/*.json
 *.csv
-
+configs/
 
 # OS
 .DS_Store
