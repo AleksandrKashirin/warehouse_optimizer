@@ -288,8 +288,8 @@ class RouteOptimizer:
             raise ValueError("Нет сохраненных маршрутов для экспорта")
         
         routes_data = []
-        for file in sorted(route_files, key=lambda x: int(Path(file).stem.split('_')[1])):
-            with open(file, 'r', encoding='utf-8') as f:
+        for route_file in sorted(route_files, key=lambda x: int(Path(x).stem.split('_')[1])):
+            with open(route_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 routes_data.append(data)
         

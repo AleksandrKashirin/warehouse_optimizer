@@ -230,13 +230,6 @@ class WarehouseGUI:
         if not self.map_image:
             return
         
-        # Сохраняем текущую позицию скролла более точно
-        try:
-            scroll_x = self.canvas.xview()[0]
-            scroll_y = self.canvas.yview()[0]
-        except:
-            scroll_x = scroll_y = 0
-        
         # Создаем изображение нужного размера
         original_width, original_height = self.map_image.size
         new_width = int(original_width * self.zoom_level)
@@ -252,16 +245,12 @@ class WarehouseGUI:
         self.photo_image = ImageTk.PhotoImage(scaled_image)
         
         # Очищаем canvas и добавляем новое изображение
-        self.canvas.delete("map_image")
+        self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image, tags="map_image")
-        self.canvas.tag_lower("map_image")  # Карта на заднем плане
+        self.canvas.tag_lower("map_image")
         
         # Обновляем область прокрутки
         self.canvas.config(scrollregion=(0, 0, new_width, new_height))
-        
-        # Восстанавливаем позицию скролла
-        if scroll_x != 0 or scroll_y != 0:
-            self.root.after_idle(lambda: self.restore_scroll_position(scroll_x, scroll_y))
         
         # Перерисовываем элементы интерфейса с учетом масштаба
         self.draw_scaled_elements()
@@ -1018,50 +1007,21 @@ class WarehouseGUI:
         if self.map_processor.original_image is None:
             return
 
-        # Получаем изображение с разметкой
+        # Получаем изображение с разметкой (только стены и стеллажи)
         img = self.map_processor.get_markup_image()
         if img is None:
             return
 
         self.map_image = img
-        self.apply_zoom()
-
-        draw = ImageDraw.Draw(img)
-
-        # Отрисовка размещенных товаров
-        for product_id, (x, y) in self.route_optimizer.placed_products.items():
-            if product_id in self.route_optimizer.access_points:
-                draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill="yellow", outline="orange")
-                access_x, access_y = self.route_optimizer.access_points[product_id]
-                draw.ellipse([access_x - 2, access_y - 2, access_x + 2, access_y + 2], fill="lightgreen", outline="green")
-                draw.line([x, y, access_x, access_y], fill="lightblue", width=1)
-            else:
-                draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill="orange", outline="red")
-            
-            draw.text((x + 5, y - 5), product_id, fill="blue")
-
-        # Отрисовка точек старта и финиша
-        if self.start_point:
-            x, y = self.start_point
-            draw.ellipse(
-                [x - 5, y - 5, x + 5, y + 5], fill="green", outline="darkgreen", width=2
-            )
-            draw.text((x + 7, y - 5), "START", fill="green")
-
-        if self.end_point:
-            x, y = self.end_point
-            draw.ellipse(
-                [x - 5, y - 5, x + 5, y + 5], fill="red", outline="darkred", width=2
-            )
-            draw.text((x + 7, y - 5), "FINISH", fill="red")
-
-        self.map_image = img
-
         self.photo_image = ImageTk.PhotoImage(img)
 
         self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_image, tags="map_image")
+        self.canvas.tag_lower("map_image")
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
+        
+        # Отрисовываем все интерактивные элементы
+        self.draw_scaled_elements()
 
     def generate_routes(self):
         """Обычная генерация маршрутов (оригинальный функционал)"""
@@ -1350,7 +1310,7 @@ class WarehouseGUI:
         routes_dir.mkdir(parents=True, exist_ok=True)
 
         map_width, map_height = self.map_image.size
-        info_width = 100
+        info_width = 200
         final_width = map_width + info_width
         final_height = max(map_height, 800)
 
