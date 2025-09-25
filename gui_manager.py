@@ -514,17 +514,14 @@ class WarehouseGUI:
         
 
     def export_csv(self):
-        """Экспорт всех маршрутов в CSV"""
-        if not self.current_config_name:
-            messagebox.showwarning("Предупреждение", "Нет активной конфигурации")
+        """Экспорт всех маршрутов в CSV (дублирующий функционал для ручного вызова)"""
+        if not hasattr(self, 'current_output_name'):
+            messagebox.showwarning("Предупреждение", "Сначала сгенерируйте маршруты")
             return
             
         try:
-            routes_dir = Path("output") / self.current_config_name / "routes"
-            count = self.route_optimizer.export_routes_to_csv(str(routes_dir / "routes_summary.csv"), str(routes_dir))
-            messagebox.showinfo("Успех", f"Экспортировано {count} маршрутов в {routes_dir}/routes_summary.csv")
-        except ValueError as e:
-            messagebox.showwarning("Внимание", str(e))
+            self.auto_export_csv()
+            messagebox.showinfo("Успех", "CSV файлы экспортированы")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка экспорта: {e}")
 
@@ -1055,6 +1052,10 @@ class WarehouseGUI:
         try:
             samples = self.route_optimizer.generate_samples(num_samples)
             self._process_routes(samples, "обычной генерации")
+            
+            # АВТОМАТИЧЕСКИ сохраняем CSV файлы
+            if hasattr(self, 'current_output_name'):
+                self.auto_export_csv()
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка генерации: {e}")
@@ -1124,11 +1125,95 @@ class WarehouseGUI:
             # 5. Генерируем маршруты в оптимизированном порядке
             self._process_routes(optimized_samples, "генерации с ограничениями и оптимизацией")
             
-            # 6. Показываем результаты оптимизации
+            # 6. АВТОМАТИЧЕСКИ сохраняем все результаты
+            if hasattr(self, 'current_output_name'):
+                self.auto_save_all_results(night_groups, stats)
+            
+            # 7. Показываем результаты оптимизации
             self.show_optimization_results(night_groups, stats)
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка генерации с ограничениями: {e}")
+
+    def auto_save_all_results(self, night_groups, stats):
+        """Автоматическое сохранение всех результатов"""
+        try:
+            output_dir = Path("output") / self.current_output_name
+            reports_dir = output_dir / "reports"
+            csv_dir = output_dir / "csv"
+            routes_dir = output_dir / "routes"
+            
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            csv_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Сохраняем план экспериментов
+            plan_filepath = reports_dir / "experiment_plan.txt"
+            with open(plan_filepath, 'w', encoding='utf-8') as f:
+                f.write("ПЛАН ПРОВЕДЕНИЯ ЭКСПЕРИМЕНТОВ\n")
+                f.write("=" * 50 + "\n\n")
+                
+                for night_idx, night_samples in enumerate(night_groups):
+                    f.write(f"НОЧЬ {night_idx + 1} ({len(night_samples)} экспериментов)\n")
+                    f.write("-" * 30 + "\n")
+                    
+                    for exp_idx, sample in enumerate(night_samples):
+                        f.write(f"Эксперимент {exp_idx + 1}: {', '.join(sample)}\n")
+                    
+                    # Список уникальных товаров для ночи
+                    night_products = set()
+                    for sample in night_samples:
+                        night_products.update(sample)
+                    f.write(f"\nТовары для подготовки ({len(night_products)} шт.): {', '.join(sorted(night_products))}\n\n")
+                
+                f.write(f"\nОБЩАЯ СТАТИСТИКА:\n")
+                f.write(f"Всего уникальных товаров: {stats['total_unique_products']}\n")
+                f.write(f"Эффективность: {stats['efficiency_score']:.1%}\n")
+            
+            # Сохраняем отчет по оптимизации
+            report_filepath = reports_dir / "optimization_report.txt"
+            with open(report_filepath, 'w', encoding='utf-8') as f:
+                f.write("ОТЧЕТ ПО ОПТИМИЗАЦИИ ВЫБОРОК\n")
+                f.write("=" * 50 + "\n\n")
+                
+                f.write("ОБЩАЯ СТАТИСТИКА:\n")
+                f.write(f"Всего уникальных товаров: {stats['total_unique_products']}\n")
+                f.write(f"Среднее количество товаров за ночь: {stats['avg_products_per_night']:.1f}\n")
+                f.write(f"Эффективность оптимизации: {stats['efficiency_score']:.1%}\n\n")
+                
+                for night_info in stats['nights']:
+                    f.write(f"=== НОЧЬ {night_info['night']} ===\n")
+                    f.write(f"Экспериментов: {night_info['experiments']}\n")
+                    f.write(f"Уникальных товаров: {night_info['unique_products']}\n")
+                    f.write(f"Общее количество смен товаров: {night_info['total_changes']}\n")
+                    f.write(f"Среднее количество смен за эксперимент: {night_info['avg_changes_per_experiment']:.1f}\n")
+                    f.write(f"Эффективность ночи: {night_info['efficiency']:.1%}\n")
+                    f.write(f"Товары: {', '.join(night_info['products'])}\n\n")
+            
+            # Экспортируем CSV файлы
+            self.route_optimizer.export_routes_to_csv(str(csv_dir / "routes_summary.csv"), str(routes_dir))
+            self.route_optimizer.export_distances_to_csv(str(csv_dir / "distances_summary.csv"), str(routes_dir))
+            
+            print(f"Все результаты автоматически сохранены в {output_dir}")
+            
+        except Exception as e:
+            print(f"Ошибка автоматического сохранения: {e}")
+
+    def auto_export_csv(self):
+        """Автоматический экспорт только CSV файлов"""
+        try:
+            output_dir = Path("output") / self.current_output_name
+            csv_dir = output_dir / "csv"
+            routes_dir = output_dir / "routes"
+            
+            csv_dir.mkdir(parents=True, exist_ok=True)
+            
+            self.route_optimizer.export_routes_to_csv(str(csv_dir / "routes_summary.csv"), str(routes_dir))
+            self.route_optimizer.export_distances_to_csv(str(csv_dir / "distances_summary.csv"), str(routes_dir))
+            
+            print(f"CSV файлы автоматически сохранены в {csv_dir}")
+            
+        except Exception as e:
+            print(f"Ошибка автоматического экспорта CSV: {e}")
 
     def _process_routes(self, samples, generation_type):
         """Общий метод для обработки сгенерированных выборок"""
@@ -1136,9 +1221,12 @@ class WarehouseGUI:
             messagebox.showwarning("Предупреждение", "Сначала сохраните конфигурацию")
             return
             
-        # Создаем папку для маршрутов этой конфигурации
-        routes_dir = Path("output") / self.current_config_name / "routes"
-        routes_dir.mkdir(parents=True, exist_ok=True)
+        # Создаем уникальное имя папки
+        output_name = self.get_output_directory_name()
+        dirs = self.create_output_structure(output_name)
+        
+        # Сохраняем имя для использования в других методах
+        self.current_output_name = output_name
         
         progress = tk.Toplevel(self.root)
         progress.title("Генерация маршрутов")
@@ -1174,9 +1262,9 @@ class WarehouseGUI:
                 else:
                     ordered_sample = sample
 
-                self.save_route_image(i + 1, path, ordered_sample, distance)
-                self.route_optimizer.save_route_info(i + 1, ordered_sample, distance, path, str(routes_dir))
-                self.save_route_segments(i + 1, ordered_sample, path)
+                self.save_route_image(i + 1, path, ordered_sample, distance, dirs['photos'])
+                self.route_optimizer.save_route_info(i + 1, ordered_sample, distance, path, str(dirs['routes']))
+                self.save_route_segments(i + 1, ordered_sample, path, dirs['routes'])
                 successful_routes += 1
             else:
                 failed_routes += 1
@@ -1191,7 +1279,7 @@ class WarehouseGUI:
                 "Успех",
                 f"Сгенерировано маршрутов ({generation_type}): {successful_routes}\n"
                 f"Не удалось построить: {failed_routes}\n"
-                f"Сохранено в: output/{self.current_config_name}/routes/",
+                f"Сохранено в: output/{output_name}/",
             )
         else:
             access_count = len(self.route_optimizer.access_points)
@@ -1208,12 +1296,11 @@ class WarehouseGUI:
                 f"Товаров с доступом: {access_count}, с количеством и доступом: {with_amount}",
             )
     
-    def save_route_segments(self, route_id: int, products: List[str], path: List[tuple]):
+    def save_route_segments(self, route_id: int, products: List[str], path: List[tuple], routes_dir: Path):
         """Сохранение детальной информации о сегментах маршрута из существующего пути"""
-        if not products or not path or not self.current_config_name:
+        if not products or not path:
             return
         
-        routes_dir = Path("output") / self.current_config_name / "routes"
         routes_dir.mkdir(parents=True, exist_ok=True)
         
         # Получаем все ключевые точки маршрута
@@ -1302,12 +1389,11 @@ class WarehouseGUI:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(path_data, f, ensure_ascii=False, indent=2)
 
-    def save_route_image(self, route_id: int, path: List[tuple], products: List[str], distance: float):
-        if not self.map_image or not self.current_config_name:
+    def save_route_image(self, route_id: int, path: List[tuple], products: List[str], distance: float, photos_dir: Path):
+        if not self.map_image:
             return
 
-        routes_dir = Path("output") / self.current_config_name / "routes"
-        routes_dir.mkdir(parents=True, exist_ok=True)
+        photos_dir.mkdir(parents=True, exist_ok=True)
 
         map_width, map_height = self.map_image.size
         info_width = 200
@@ -1490,18 +1576,18 @@ class WarehouseGUI:
 
                 y_pos += 15
 
-        filepath = routes_dir / f"route_{route_id}.png"
+        filepath = photos_dir / f"route_{route_id}.png"
         final_img.save(filepath)
 
     def view_routes(self):
         """Просмотр сохраненных маршрутов"""
-        if not self.current_config_name:
-            messagebox.showwarning("Предупреждение", "Нет активной конфигурации")
+        if not hasattr(self, 'current_output_name'):
+            messagebox.showwarning("Предупреждение", "Сначала сгенерируйте маршруты")
             return
             
         import glob
 
-        routes_dir = Path("output") / self.current_config_name / "routes"
+        routes_dir = Path("output") / self.current_output_name / "routes"
         route_files = glob.glob(str(routes_dir / "route_*_info.json"))
         
         if not route_files:
@@ -1567,7 +1653,8 @@ class WarehouseGUI:
             selection = listbox.curselection()
             if selection:
                 route_id = routes_data[selection[0]]["route_id"]
-                image_path = routes_dir / f"route_{route_id}.png"
+                photos_dir = Path("output") / self.current_output_name / "photos"
+                image_path = photos_dir / f"route_{route_id}.png"
                 if image_path.exists():
                     import os
                     if os.name == "nt":
@@ -1630,6 +1717,14 @@ class WarehouseGUI:
         tk.Label(stats_frame, text=f"Среднее количество товаров за ночь: {stats['avg_products_per_night']:.1f}").pack()
         tk.Label(stats_frame, text=f"Эффективность оптимизации: {stats['efficiency_score']:.1%}").pack()
         
+        # Уведомление об автоматическом сохранении
+        if hasattr(self, 'current_output_name'):
+            save_info_frame = tk.Frame(result_window)
+            save_info_frame.pack(fill=tk.X, padx=10, pady=5)
+            save_path = Path("output") / self.current_output_name
+            tk.Label(save_info_frame, text=f"✓ Все результаты сохранены в: {save_path}", 
+                    fg="green", font=("Arial", 10, "bold")).pack()
+        
         # Текстовое поле с результатами
         text_frame = tk.Frame(result_window)
         text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -1655,67 +1750,85 @@ class WarehouseGUI:
         text_widget.insert(tk.END, result_text)
         text_widget.config(state=tk.DISABLED)
         
-        # Кнопки
+        # Кнопки (только для открытия папки и закрытия)
         button_frame = tk.Frame(result_window)
         button_frame.pack(fill=tk.X, padx=10, pady=5)
         
+        def open_results_folder():
+            if hasattr(self, 'current_output_name'):
+                output_dir = Path("output") / self.current_output_name
+                if output_dir.exists():
+                    import os
+                    if os.name == "nt":
+                        os.startfile(str(output_dir))
+                    else:
+                        os.system(f"open '{output_dir}' 2>/dev/null || xdg-open '{output_dir}'")
+        
+        tk.Button(button_frame, text="Открыть папку с результатами", command=open_results_folder).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Закрыть", command=result_window.destroy).pack(side=tk.RIGHT, padx=5)
+        
         def save_optimized():
-            # Сохраняем оптимизированный порядок
-            filepath = filedialog.asksaveasfilename(
-                title="Сохранить план экспериментов",
-                defaultextension=".txt",
-                filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
-            )
-            if filepath:
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write("ПЛАН ПРОВЕДЕНИЯ ЭКСПЕРИМЕНТОВ\n")
-                    f.write("=" * 50 + "\n\n")
-                    
-                    for night_idx, night_samples in enumerate(night_groups):
-                        f.write(f"НОЧЬ {night_idx + 1} ({len(night_samples)} экспериментов)\n")
-                        f.write("-" * 30 + "\n")
-                        
-                        for exp_idx, sample in enumerate(night_samples):
-                            f.write(f"Эксперимент {exp_idx + 1}: {', '.join(sample)}\n")
-                        
-                        # Список уникальных товаров для ночи
-                        night_products = set()
-                        for sample in night_samples:
-                            night_products.update(sample)
-                        f.write(f"\nТовары для подготовки ({len(night_products)} шт.): {', '.join(sorted(night_products))}\n\n")
-                    
-                    f.write(f"\nОБЩАЯ СТАТИСТИКА:\n")
-                    f.write(f"Всего уникальных товаров: {stats['total_unique_products']}\n")
-                    f.write(f"Эффективность: {stats['efficiency_score']:.1%}\n")
+            if not hasattr(self, 'current_output_name'):
+                messagebox.showwarning("Предупреждение", "Сначала сгенерируйте маршруты")
+                return
                 
-                messagebox.showinfo("Успех", f"План сохранен в {filepath}")
+            reports_dir = Path("output") / self.current_output_name / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            
+            filepath = reports_dir / "experiment_plan.txt"
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write("ПЛАН ПРОВЕДЕНИЯ ЭКСПЕРИМЕНТОВ\n")
+                f.write("=" * 50 + "\n\n")
+                
+                for night_idx, night_samples in enumerate(night_groups):
+                    f.write(f"НОЧЬ {night_idx + 1} ({len(night_samples)} экспериментов)\n")
+                    f.write("-" * 30 + "\n")
+                    
+                    for exp_idx, sample in enumerate(night_samples):
+                        f.write(f"Эксперимент {exp_idx + 1}: {', '.join(sample)}\n")
+                    
+                    # Список уникальных товаров для ночи
+                    night_products = set()
+                    for sample in night_samples:
+                        night_products.update(sample)
+                    f.write(f"\nТовары для подготовки ({len(night_products)} шт.): {', '.join(sorted(night_products))}\n\n")
+                
+                f.write(f"\nОБЩАЯ СТАТИСТИКА:\n")
+                f.write(f"Всего уникальных товаров: {stats['total_unique_products']}\n")
+                f.write(f"Эффективность: {stats['efficiency_score']:.1%}\n")
+            
+            messagebox.showinfo("Успех", f"План сохранен в {filepath}")
 
         def save_report():
-            filepath = filedialog.asksaveasfilename(
-                title="Сохранить отчет оптимизации",
-                defaultextension=".txt",
-                filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
-            )
-            if filepath:
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write("ОТЧЕТ ПО ОПТИМИЗАЦИИ ВЫБОРОК\n")
-                    f.write("=" * 50 + "\n\n")
-                    
-                    f.write("ОБЩАЯ СТАТИСТИКА:\n")
-                    f.write(f"Всего уникальных товаров: {stats['total_unique_products']}\n")
-                    f.write(f"Среднее количество товаров за ночь: {stats['avg_products_per_night']:.1f}\n")
-                    f.write(f"Эффективность оптимизации: {stats['efficiency_score']:.1%}\n\n")
-                    
-                    for night_info in stats['nights']:
-                        f.write(f"=== НОЧЬ {night_info['night']} ===\n")
-                        f.write(f"Экспериментов: {night_info['experiments']}\n")
-                        f.write(f"Уникальных товаров: {night_info['unique_products']}\n")
-                        f.write(f"Общее количество смен товаров: {night_info['total_changes']}\n")
-                        f.write(f"Среднее количество смен за эксперимент: {night_info['avg_changes_per_experiment']:.1f}\n")
-                        f.write(f"Эффективность ночи: {night_info['efficiency']:.1%}\n")
-                        f.write(f"Товары: {', '.join(night_info['products'])}\n\n")
+            if not hasattr(self, 'current_output_name'):
+                messagebox.showwarning("Предупреждение", "Сначала сгенерируйте маршруты")
+                return
                 
-                messagebox.showinfo("Успех", f"Отчет сохранен в {filepath}")
+            reports_dir = Path("output") / self.current_output_name / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            
+            filepath = reports_dir / "optimization_report.txt"
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write("ОТЧЕТ ПО ОПТИМИЗАЦИИ ВЫБОРОК\n")
+                f.write("=" * 50 + "\n\n")
+                
+                f.write("ОБЩАЯ СТАТИСТИКА:\n")
+                f.write(f"Всего уникальных товаров: {stats['total_unique_products']}\n")
+                f.write(f"Среднее количество товаров за ночь: {stats['avg_products_per_night']:.1f}\n")
+                f.write(f"Эффективность оптимизации: {stats['efficiency_score']:.1%}\n\n")
+                
+                for night_info in stats['nights']:
+                    f.write(f"=== НОЧЬ {night_info['night']} ===\n")
+                    f.write(f"Экспериментов: {night_info['experiments']}\n")
+                    f.write(f"Уникальных товаров: {night_info['unique_products']}\n")
+                    f.write(f"Общее количество смен товаров: {night_info['total_changes']}\n")
+                    f.write(f"Среднее количество смен за эксперимент: {night_info['avg_changes_per_experiment']:.1f}\n")
+                    f.write(f"Эффективность ночи: {night_info['efficiency']:.1%}\n")
+                    f.write(f"Товары: {', '.join(night_info['products'])}\n\n")
+            
+            messagebox.showinfo("Успех", f"Отчет сохранен в {filepath}")
 
         tk.Button(button_frame, text="Сохранить план", command=save_optimized).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Сохранить отчет", command=save_report).pack(side=tk.LEFT, padx=5)
@@ -1724,20 +1837,17 @@ class WarehouseGUI:
         tk.Button(button_frame, text="Закрыть", command=result_window.destroy).pack(side=tk.RIGHT, padx=5)
 
     def export_distances_csv(self):
-        """Экспорт дистанций между точками маршрутов в CSV"""
-        if not self.current_config_name:
-            messagebox.showwarning("Предупреждение", "Нет активной конфигурации")
+        """Экспорт дистанций между точками маршрутов в CSV (дублирующий функционал)"""
+        if not hasattr(self, 'current_output_name'):
+            messagebox.showwarning("Предупреждение", "Сначала сгенерируйте маршруты")
             return
             
         try:
-            routes_dir = Path("output") / self.current_config_name / "routes"
-            count = self.route_optimizer.export_distances_to_csv(str(routes_dir / "distances_summary.csv"), str(routes_dir))
-            messagebox.showinfo("Успех", f"Экспортировано {count} маршрутов с дистанциями в {routes_dir}/distances_summary.csv")
-        except ValueError as e:
-            messagebox.showwarning("Внимание", str(e))
+            self.auto_export_csv()
+            messagebox.showinfo("Успех", "CSV файлы с дистанциями экспортированы")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка экспорта дистанций: {e}")
-    
+
     def new_config(self):
         """Создание новой конфигурации"""
         self.current_config_name = None
@@ -1954,6 +2064,44 @@ class WarehouseGUI:
         """Автосохранение текущей конфигурации"""
         if self.current_config_name and hasattr(self, 'current_map_path'):
             self.save_config_by_name(self.current_config_name)
+    
+    def get_output_directory_name(self):
+        """Генерация уникального имени папки для результатов"""
+        if not self.current_config_name:
+            return None
+            
+        base_name = self.current_config_name
+        base_path = Path("output") / base_name
+        
+        # Если папка не существует, используем базовое имя
+        if not base_path.exists():
+            return base_name
+        
+        # Ищем следующий доступный ID
+        counter = 2
+        while True:
+            new_name = f"{base_name}_{counter}"
+            new_path = Path("output") / new_name
+            if not new_path.exists():
+                return new_name
+            counter += 1
+
+    def create_output_structure(self, output_name):
+        """Создание структуры папок для результатов"""
+        base_dir = Path("output") / output_name
+        
+        dirs = {
+            'base': base_dir,
+            'reports': base_dir / "reports",
+            'csv': base_dir / "csv", 
+            'routes': base_dir / "routes",
+            'photos': base_dir / "photos"
+        }
+        
+        for dir_path in dirs.values():
+            dir_path.mkdir(parents=True, exist_ok=True)
+        
+        return dirs
 
 if __name__ == "__main__":
     root = tk.Tk()
